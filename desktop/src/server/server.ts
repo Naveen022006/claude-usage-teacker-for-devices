@@ -7,10 +7,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { extname, join } from "node:path";
-import type { AccountUsage, AccountWindow } from "../../../src/shared/types";
+import type { AccountUsage, AccountWindow, Plan } from "../../../src/shared/types";
 import { normalizeBase } from "../../../src/sync/hub";
 import type { DesktopRequest, DesktopState } from "../shared/ipc";
 import { createEngine, type Engine } from "../main/engine";
+import { createAccountSource } from "./accountUsage";
+import { buildTrayState } from "./trayState";
+import type { TrayState } from "../shared/tray";
 import { loadConfig } from "../../../daemon/src/config";
 
 export const APP_NAME = "usage-meter-desktop";
@@ -34,6 +37,11 @@ export interface ServerOpts {
   hub?: HubConf | null;
   port?: number;
   hubPollMs?: number;
+  /** Claude Code credentials file; undefined = default location; null = none. Read only. */
+  credentialsPath?: string | null;
+  /** Injectable fetch for the account usage API (tests). */
+  accountFetch?: typeof fetch;
+  accountPollMs?: number;
   scanIntervalMs?: number;
   /** Called when the server wants to end the process (quit request). */
   onExit?: () => void;
@@ -47,6 +55,7 @@ export interface RunningServer {
   close(): Promise<void>;
   sseStatus(): { clients: number; everConnected: boolean; idleSince: number | null };
   hubRefresh(): Promise<void>;
+  limitsRefresh(): Promise<void>;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -99,13 +108,18 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
   let hubError: string | undefined;
   let lastApplied = 0;
   let hubBusy: Promise<void> | null = null;
+  let plan: Plan | null = null;
+  let limitsSource: TrayState["limitsSource"] = null;
+  let limitsNote: string | null = null;
+  const account = createAccountSource({ path: opts.credentialsPath === null ? join(opts.dataDir, "no-credentials.json") : opts.credentialsPath, fetchFn: opts.accountFetch });
+  let accountBusy: Promise<void> | null = null;
 
   function buildState(): DesktopState {
     const e = engine.snapshot();
     return {
       now: Date.now(),
-      auth: hub ? { state: "signed-in", ...(hubError ? { error: hubError } : {}) } : { state: "signed-out" },
-      plan: null,
+      auth: hub || limitsSource === "account" ? { state: "signed-in", ...(hubError && limitsSource !== "account" ? { error: hubError } : {}) } : { state: "signed-out" },
+      plan,
       accountUsage,
       attribution: e.attribution,
       local: e.local,
@@ -159,6 +173,8 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
         if (acct && acct.fetchedAt > lastApplied) {
           lastApplied = acct.fetchedAt;
           accountUsage = acct;
+          limitsSource = "hub";
+          limitsNote = null;
           engine.applyAccountUsage(acct, acct.fetchedAt);
         }
       }
@@ -171,18 +187,42 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
     if (!hubBusy) hubBusy = hubFetch().finally(() => { hubBusy = null; });
     return hubBusy;
   }
+  async function accountFetchOnce(): Promise<void> {
+    const r = await account.poll();
+    if (r.kind === "ok") {
+      accountUsage = r.usage;
+      if (r.plan) plan = r.plan;
+      limitsSource = "account";
+      limitsNote = null;
+      engine.applyAccountUsage(r.usage, r.usage.fetchedAt);
+    } else if (r.kind === "error") {
+      if (r.plan) plan = r.plan;
+      limitsNote = r.note;
+      if (limitsSource === null && !accountUsage) limitsSource = "account";
+    } else if (hub) {
+      limitsNote = null;
+      await hubFetch();
+    } else {
+      limitsNote = r.note;
+    }
+    pushSoon();
+  }
+  /** Account (Claude Code sign-in) when available; Usage Hub only as fallback when there is no credentials file. */
+  function limitsRefresh(): Promise<void> {
+    if (!accountBusy) accountBusy = accountFetchOnce().catch(() => {}).finally(() => { accountBusy = null; });
+    return accountBusy;
+  }
   const burst: NodeJS.Timeout[] = [];
   const offReplies = engine.onReplies(() => {
-    if (!hub) return;
     for (const ms of [4000, 20000]) {
-      const t = setTimeout(() => void hubRefresh(), ms);
+      const t = setTimeout(() => void limitsRefresh(), ms);
       t.unref();
       burst.push(t);
     }
   });
   const offChange = engine.onChange(pushSoon);
-  const hubTimer = hub ? setInterval(() => void hubRefresh(), opts.hubPollMs ?? POLL_MS) : null;
-  hubTimer?.unref();
+  const hubTimer = setInterval(() => void limitsRefresh(), opts.accountPollMs ?? opts.hubPollMs ?? POLL_MS);
+  hubTimer.unref();
 
   // ---- http ----
   let port = 0;
@@ -230,7 +270,7 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
       case "get-state":
         return buildState();
       case "refresh":
-        await Promise.allSettled([engine.refreshNow(), hubRefresh()]);
+        await Promise.allSettled([engine.refreshNow(), limitsRefresh()]);
         return buildState();
       case "set-ui": {
         const u = req.ui ?? {};
@@ -275,6 +315,10 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
           return void res.end(readFileSync(f));
         }
         if (rest === "api/state" && req.method === "GET") return json(res, 200, buildState());
+        if (rest === "api/tray" && req.method === "GET") {
+          const e = engine.snapshot();
+          return json(res, 200, buildTrayState({ now: Date.now(), plan, limitsSource, limitsNote, accountUsage, attribution: e.attribution, tokensNew5hByModel: e.tokensNew5hByModel }));
+        }
         if (rest === "api/events" && req.method === "GET") {
           res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive", "X-Content-Type-Options": "nosniff" });
           clients.add(res);
@@ -322,7 +366,7 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
   port = (server.address() as { port: number }).port;
 
   engine.start();
-  void hubRefresh();
+  void limitsRefresh();
 
   return {
     port,
@@ -330,10 +374,11 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
     url: `http://127.0.0.1:${port}${prefix()}`,
     engine,
     hubRefresh,
+    limitsRefresh,
     sseStatus: () => ({ clients: clients.size, everConnected, idleSince }),
     async close() {
       clearInterval(keepalive);
-      if (hubTimer) clearInterval(hubTimer);
+      clearInterval(hubTimer);
       if (pushTimer) clearTimeout(pushTimer);
       for (const t of burst) clearTimeout(t);
       if (saveTimer) {

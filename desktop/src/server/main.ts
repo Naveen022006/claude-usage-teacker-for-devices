@@ -4,7 +4,11 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { APP_NAME, DEFAULT_PORT, defaultDirs, startServer } from "./server";
 
-const noWindow = process.env.USAGE_METER_NO_WINDOW === "1";
+const argv = process.argv.slice(2);
+const headless = argv.includes("--headless");
+const parentIdx = argv.indexOf("--parent-pid");
+const parentPid = parentIdx >= 0 ? Number(argv[parentIdx + 1]) : NaN;
+const noWindow = headless || process.env.USAGE_METER_NO_WINDOW === "1";
 const { dataDir, projectsDir } = defaultDirs();
 const instanceFile = join(dataDir, "instance.json");
 
@@ -46,6 +50,10 @@ async function existingInstance(): Promise<string | null> {
 
 async function main(): Promise<void> {
   const other = await existingInstance();
+  if (other && headless) {
+    console.log("Usage Meter Desktop is already running.");
+    return;
+  }
   if (other) {
     console.log("Usage Meter Desktop is already running; opening a new window.");
     openWindow(other);
@@ -85,6 +93,15 @@ async function main(): Promise<void> {
   // Don't tie our lifetime to the spawned msedge.exe: it hands the window to Edge's browser process and
   // exits immediately. The SSE connection is the real "window is open" signal.
   openWindow(srv.url);
+  if (Number.isInteger(parentPid) && parentPid > 0) {
+    setInterval(() => {
+      try {
+        process.kill(parentPid, 0);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "EPERM") void stop(); // parent gone
+      }
+    }, 5000).unref();
+  }
   if (!noWindow) {
     const startedAt = Date.now();
     setInterval(() => {

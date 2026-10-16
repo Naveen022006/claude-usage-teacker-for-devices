@@ -45,6 +45,7 @@ beforeAll(async () => {
     distDir: dist,
     hub: { url: `http://127.0.0.1:${hubPort}`, token: TOKEN },
     port: 0,
+    credentialsPath: null,
     hubPollMs: 60_000,
     scanIntervalMs: 60_000,
     onExit: () => { exited = true; },

@@ -165,3 +165,15 @@ describe("engine", () => {
     e.stop();
   });
 });
+
+describe("new tokens (cache reads excluded)", () => {
+  it("tokensNew5hByModel = prompt - cacheRead + output", async () => {
+    await writeFile(file, line("m1", { input: 100, cc: 50, cr: 1000, out: 20 }));
+    const e = mk();
+    e.start();
+    await e.refreshNow();
+    const snap = e.snapshot();
+    e.stop();
+    expect(snap.tokensNew5hByModel["claude-sonnet-5-5"]).toBe(100 + 50 + 20);
+  });
+});

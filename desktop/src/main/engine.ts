@@ -17,7 +17,7 @@ export interface Engine {
   applyAccountUsage(u: AccountUsage, now: number): void;
   resetAttribution(): void;
   refreshNow(): Promise<void>;
-  snapshot(): Pick<DesktopState, "attribution" | "local" | "tokens5hByModel" | "scan">;
+  snapshot(): Pick<DesktopState, "attribution" | "local" | "tokens5hByModel" | "scan"> & { tokensNew5hByModel: Record<string, number> };
   onChange(cb: () => void): () => void;
   onReplies(cb: () => void): () => void;
 }
@@ -241,9 +241,16 @@ export function createEngine(opts: { dataDir: string; projectsDir: string; scanI
         local.push({ source, aggregates });
         for (const [m, v] of Object.entries(aggregates.last5h.byModel)) tokens5hByModel[m] = (tokens5hByModel[m] ?? 0) + v.tokens;
       }
+      // NEW tokens: prompt minus cache reads, plus output (cache reads barely count against limits).
+      const tokensNew5hByModel: Record<string, number> = {};
+      for (const e of events) {
+        if (e.ts < t - H5 || e.ts > t) continue;
+        const n = Math.max(0, e.promptTokens - (e.cacheReadTokens ?? 0)) + e.outputTokens;
+        tokensNew5hByModel[e.model] = (tokensNew5hByModel[e.model] ?? 0) + n;
+      }
       const scanState: DesktopState["scan"] = { lastScanAt, filesRead };
       if (scanError) scanState.error = scanError;
-      return { attribution: attributionView(ledger), local, tokens5hByModel, scan: scanState };
+      return { attribution: attributionView(ledger), local, tokens5hByModel, tokensNew5hByModel, scan: scanState };
     },
     onChange(cb) {
       changeCbs.add(cb);

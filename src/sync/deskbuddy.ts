@@ -1,5 +1,5 @@
 import { computeAggregates } from "../shared/aggregate";
-import type { AccountUsage, DeviceInfo, Report, UsageEvent } from "../shared/types";
+import type { AccountUsage, DeviceInfo, Report, Source, UsageEvent } from "../shared/types";
 
 const TIMEOUT_MS = 3000;
 
@@ -14,15 +14,16 @@ export function buildReport(
   events: UsageEvent[],
   account: AccountUsage | null,
   now = Date.now(),
+  opts: { source: Source; estimated: boolean } = { source: "chrome", estimated: true },
 ): Report {
   return {
     v: 1,
     deviceId: device.deviceId,
     deviceName: device.deviceName,
-    source: "chrome",
+    source: opts.source,
     sentAt: now,
     windows: computeAggregates(events, now),
-    estimated: true,
+    estimated: opts.estimated,
     account,
   };
 }

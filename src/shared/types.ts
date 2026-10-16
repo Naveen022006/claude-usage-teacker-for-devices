@@ -20,6 +20,9 @@ export interface UsageEvent {
   estimated: boolean;
   status: EventStatus;
   kind: EventKind;
+  // Exact sources only (Claude Code). promptTokens already includes these; kept for detail views.
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
 }
 
 /**

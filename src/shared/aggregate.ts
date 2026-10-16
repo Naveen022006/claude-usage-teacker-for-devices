@@ -36,12 +36,24 @@ export function computeAggregates(events: UsageEvent[], now: number): Aggregates
   return out;
 }
 
-/** Keep the last 30 days, at most MAX_EVENTS (newest kept). Output sorted oldest-first only when capped. */
-export function pruneEvents(events: UsageEvent[], now: number): UsageEvent[] {
-  const cutoff = now - RETENTION_MS;
+export interface PruneLimits {
+  retentionMs: number;
+  maxEvents: number;
+}
+
+/**
+ * Keep events within retentionMs, at most maxEvents (newest kept). Output sorted oldest-first only when capped.
+ * Defaults suit the extension; heavy sources (Claude Code) pass a shorter retention and larger cap so last7d stays complete.
+ */
+export function pruneEvents(
+  events: UsageEvent[],
+  now: number,
+  { retentionMs, maxEvents }: PruneLimits = { retentionMs: RETENTION_MS, maxEvents: MAX_EVENTS },
+): UsageEvent[] {
+  const cutoff = now - retentionMs;
   let kept = events.filter((e) => e.ts >= cutoff);
-  if (kept.length > MAX_EVENTS) {
-    kept = [...kept].sort((a, b) => b.ts - a.ts).slice(0, MAX_EVENTS).sort((a, b) => a.ts - b.ts);
+  if (kept.length > maxEvents) {
+    kept = [...kept].sort((a, b) => b.ts - a.ts).slice(0, maxEvents).sort((a, b) => a.ts - b.ts);
   }
   return kept;
 }

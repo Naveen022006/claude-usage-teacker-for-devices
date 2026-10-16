@@ -248,13 +248,15 @@ async function handleWidget(type: "get-widget-state" | "open-options", orgHint?:
       await chrome.runtime.openOptionsPage();
       return { ok: true, data: null };
     }
-    const [device, settings, syncState, accountUsage, events, orgId] = await Promise.all([
+    const [device, settings, syncState, accountUsage, events, orgId, captureDiag, swDiag] = await Promise.all([
       store.ensureDevice(),
       store.get("settings"),
       store.get("syncState"),
       store.get("accountUsage"),
       store.get("events"),
       store.get("orgId"),
+      store.get("captureDiag"),
+      store.get("swDiag"),
     ]);
     let org = orgId;
     let learned = false;
@@ -280,6 +282,8 @@ async function handleWidget(type: "get-widget-state" | "open-options", orgHint?:
       codeDeviceIds: sanitizeDeviceIds(settings.codeDeviceIds) ?? [],
       hub: await getHubState(settings),
       now,
+      captureDiag,
+      swDiag,
     };
     return { ok: true, data: state };
   } catch (e) {

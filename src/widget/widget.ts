@@ -5,7 +5,7 @@
 import { parseLastActiveOrg } from "../shared/org";
 import { NS, type UiResponse, type WidgetState } from "../shared/messages";
 import type { WindowAggregate } from "../shared/types";
-import { HOST_ATTR, detectMode, placeHost, watchPlacement, type Mode, type Placement } from "./anchor";
+import { HOST_ATTR, detectMode, placeHost, styleSampleRow, watchPlacement, type Mode, type Placement } from "./anchor";
 import {
   TABS,
   clampPct,
@@ -247,7 +247,7 @@ class Widget {
     this.placement = r.placement;
     this.mode = r.mode;
     if (r.changed || before.p !== r.placement || before.m !== r.mode) {
-      this.applyHostStyle(r.row);
+      this.applyHostStyle(this.host.dataset.placement === "before" ? styleSampleRow(this.host, r.row) : r.row);
       this.render();
       this.syncCountdown();
     }
@@ -583,12 +583,31 @@ class Widget {
     const shares = modelShares(agg.byModel);
     if (!shares.length) {
       out.push(h("div", { class: "sb-none" }, "No usage in this window"));
+      if (this.mode === "chat") out.push(...this.sbCaptureLines(s));
       return out;
     }
     for (const m of shares.slice(0, MAX_MODEL_ROWS)) {
       out.push(this.sbRow(`${m.label}:`, m.pct, "ok", h("span", { class: "tk" }, `${estimated ? "≈" : ""}${formatTokens(m.tokens)} tok`)));
     }
     if (shares.length > MAX_MODEL_ROWS) out.push(h("div", { class: "sb-none" }, `+${shares.length - MAX_MODEL_ROWS} more`));
+    return out;
+  }
+
+  /** Temporary capture diagnostics: counters, redacted path patterns and event-type names only. */
+  private sbCaptureLines(s: WidgetState): HTMLElement[] {
+    const d = s.captureDiag;
+    if (!d) return [h("div", { class: "sb-diag", title: "No diagnostics received from the page script" }, "Capture: no data from page script (reload the tab)")];
+    const sw = s.swDiag;
+    let line = `Capture: hook ${d.hookInstalled ? "✓" : "✗"} · API calls ${d.fetchCalls} · streams ${d.streamsSeen} · recorded ${d.eventsPosted} · stored ${sw?.eventsStored ?? 0}`;
+    if (sw && sw.eventsRejected > 0) line += ` · rejected ${sw.eventsRejected}${sw.lastRejectReason ? ` (${sw.lastRejectReason})` : ""}`;
+    const out = [h("div", { class: "sb-diag", title: line }, line)];
+    if (d.streamsSeen > 0 && d.eventsPosted === 0) {
+      const last = d.observations?.[d.observations.length - 1];
+      if (last) {
+        const t = `Last stream: ${last.pathPattern} · ${last.eventTypes.slice(0, 5).join(", ") || "no events"}`;
+        out.push(h("div", { class: "sb-diag cut", title: t }, t));
+      }
+    }
     return out;
   }
 

@@ -6,6 +6,7 @@
     ?mode=chat|code|floating   which claude.ai layout to imitate (floating = no sidebar, old pill)
     ?theme=dark|light          sidebar colours (claude.ai can be dark while the OS is light)
     ?hub=off                   code mode without a configured hub
+    ?empty=1                   chat empty state (no usage in window) with the capture status line
     ?extra=1                   also show Weekly Opus / Weekly Sonnet (high-usage colours)
 -->
 <style>
@@ -40,8 +41,9 @@
     if (mode === "chat") {
       html = '<aside class="sidebar"><nav aria-label="Sidebar"><div class="rows">' +
         row("New", "/new") + row("Projects", "/projects") + row("Artifacts", "/artifacts") + row("Code", "/code") + row("Customize", "/customize") +
-        '</div><div class="sect"><div class="h">Pinned</div><a href="/chat/1">Quarterly planning notes</a><a href="/chat/2">Refactor the parser</a>' +
-        '<div class="h">Recents</div><a href="/chat/3">Trip ideas</a></div></nav></aside>';
+        '<div class="rw"><div><button type="button" style="all:unset;display:flex;align-items:center;gap:10px;height:36px;padding:0 10px;cursor:pointer"><span class="ic"></span><span>More</span><svg width="12" height="12" viewBox="0 0 16 16" style="margin-left:auto"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button></div></div>' +
+        '</div><div class="sect"><div class="h">Pinned</div><a href="/chat/1">Quarterly planning notes</a><a href="/chat/2">Refactor the parser</a><a href="/chat/4">Meeting recap</a></div>' +
+        '<div class="sect"><div class="h">Recents</div><a href="/chat/3">Trip ideas</a><a href="/chat/5">Budget review</a></div></nav></aside>';
     } else if (mode === "code") {
       html = '<div class="sidebar"><div class="ttl">Claude Code</div><div class="search">Search</div><div class="rows">' +
         row("New", "/code") + row("Projects (Beta)", "/code/projects") + row("Artifacts", "/code/artifacts") + row("Customize", "/code/customize") + '<div class="rw"><div><button type="button" style="all:unset;display:flex;align-items:center;gap:8px;cursor:pointer"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor"/></svg>···<span>More</span></button></div></div>' +
@@ -75,11 +77,14 @@
         { name: "seven_day_opus", utilization: 92, resetsAt: new Date(now + 2 * 86400000).toISOString() },
         { name: "seven_day_sonnet", utilization: 83, resetsAt: new Date(now + 5 * 86400000).toISOString() } ] : []) },
       syncState: { lastOkAt: now - 20000, lastAttemptAt: now, lastError: null, queue: 0 }, showWidget: true, codeDeviceIds: [], now: now,
+      captureDiag: { updatedAt: now, hookInstalled: true, fetchCalls: 42, streamsSeen: 3, emptyStreams: 0, eventsPosted: 0, observations: [{ at: now, pathPattern: "/api/organizations/:id/chat_conversations/:id/completion", contentType: "text/event-stream", status: 200, matchedRegex: true, eventTypes: ["message_start", "content_block_start", "content_block_delta", "message_delta", "message_stop"], recorded: false }] },
+      swDiag: { eventsReceived: 0, eventsRejected: 0, lastRejectReason: null, eventsStored: 0 },
       hub: q.get("hub") === "off" ? { configured: false, ok: false, fetchedAt: 0, devices: [] } : { configured: true, ok: true, fetchedAt: now, devices: [
         { deviceId: "me", deviceName: "Chrome", source: "chrome", estimated: true, receivedAt: now, fresh: true, windows: windows(1) },
         { deviceId: "cc", deviceName: "work-laptop", source: "claude-code", estimated: false, receivedAt: now - min, fresh: true, windows: windows(3) },
         { deviceId: "dk", deviceName: "home-pc", source: "desktop", estimated: false, receivedAt: now - 120 * min, fresh: false, windows: windows(0.5) } ] }
     };
+    if (q.get("empty") === "1") state.aggregates = { today: mk([0,0],[0,0],[0,0]), last5h: mk([0,0],[0,0],[0,0]), last7d: mk([0,0],[0,0],[0,0]) };
     var store = {};
     window.chrome = {
       runtime: { id: "preview",

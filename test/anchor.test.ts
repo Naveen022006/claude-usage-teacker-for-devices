@@ -27,11 +27,27 @@ const CODE = `
   <div class="recents"><div>Recents</div><a href="/code/s1">Session one</a></div>
  </div></div>`;
 
+const CODE_NO_REC = CODE.replace("Recents", "Older");
+
 const OTHER_LANG = `
 <nav>
   <a href="/a">Neu</a><a href="/b">Projekte</a><a href="/c">Artefakte</a><a href="/d">Anpassen</a>
   <h3>Angeheftet</h3><a href="/chat/1">Chat</a>
 </nav>`;
+
+const CHAT_REAL = (recents: string) => `
+<div class="side"><nav aria-label="Sidebar">
+  <div class="rows">
+    <div class="r"><a href="/new"><span>New chat</span></a></div>
+    <div class="r"><a href="/projects"><span>Projects</span></a></div>
+    <div class="r"><a href="/artifacts"><span>Artifacts</span></a></div>
+    <div class="r"><a href="/code"><span>Code</span></a></div>
+    <div class="r" id="cust"><div><a href="/customize"><span>Customize</span></a></div></div>
+    <div class="r" id="more"><button type="button"><span>More</span><svg></svg></button></div>
+  </div>
+  <div class="pinned"><div id="pinh"><span>Pinned</span></div><div class="list"><a href="/chat/p1">Pin one</a><a href="/chat/p2">Pin two</a><a href="/chat/p3">Pin three</a></div></div>
+  <div class="recents"><div id="rech"><span>${recents}</span><button aria-label="Filter"><svg></svg></button></div><div class="list"><a href="/chat/r1">Recent one</a><a href="/chat/r2">Recent two</a></div></div>
+</nav></div>`;
 
 function setup(html: string): void {
   document.body.innerHTML = html;
@@ -70,7 +86,7 @@ describe("findAnchor", () => {
     expect(a.row.id).toBe("cust");
   });
   it("code: More row, ignoring Customize and the main content text", () => {
-    setup(CODE);
+    setup(CODE_NO_REC);
     expect(findAnchor(document, "code", ok)!.row.id).toBe("more");
   });
   it("chat fallback: last row before the first section heading in another language", () => {
@@ -93,7 +109,7 @@ describe("findAnchor", () => {
   it("code: More row with svg icon and a dots text node before the label", () => {
     setup(`<nav><a href="/code/customize"><span>Customize</span></a>
       <div id="more"><button type="button"><svg></svg>···<span> More</span></button></div>
-      <div><span>Recents</span></div></nav>`);
+      <div><span>Older</span></div></nav>`);
     const a = findAnchor(document, "code", ok)!;
     expect(a.via).toBe("label");
     expect(a.row.id).toBe("more");
@@ -101,24 +117,24 @@ describe("findAnchor", () => {
   it("code: More matched through aria-label when hidden text is appended", () => {
     setup(`<nav><a href="/code/customize">Customize</a>
       <div id="more"><button aria-label="More"><svg></svg><span>···</span><span class="sr-only">options</span></button></div>
-      <div>Recents</div></nav>`);
+      <div>Older</div></nav>`);
     expect(findAnchor(document, "code", ok)!.row.id).toBe("more");
   });
   it("code: More text in a nested span", () => {
-    setup(`<nav><div id="more"><div><div role="button"><span><span>More</span></span></div></div></div><div>Recents</div></nav>`);
+    setup(`<nav><div id="more"><div><div role="button"><span><span>More</span></span></div></div></div><div>Older</div></nav>`);
     expect(findAnchor(document, "code", ok)!.row.id).toBe("more");
   });
   it("code: no More row -> Customize next sibling, unless that is a section heading", () => {
-    setup(`<nav><div><a href="/code/customize">Customize</a></div><div id="next"><a href="/code/x">Extra</a></div><div class="h">Recents</div></nav>`);
+    setup(`<nav><div><a href="/code/customize">Customize</a></div><div id="next"><a href="/code/x">Extra</a></div><div class="h">Older</div></nav>`);
     let a = findAnchor(document, "code", ok)!;
     expect(a.via).toBe("sibling");
     expect(a.row.id).toBe("next");
-    setup(`<nav><div id="cust"><a href="/code/customize">Customize</a></div><div class="h">Recents</div><a href="/code/s1">Session</a></nav>`);
+    setup(`<nav><div id="cust"><a href="/code/customize">Customize</a></div><div class="h">Older</div><a href="/code/s1">Session</a></nav>`);
     a = findAnchor(document, "code", ok)!;
     expect(a.row.id).toBe("cust");
   });
   it("code: host placed under Customize moves to More once More renders", () => {
-    setup(`<nav><div id="cust"><a href="/code/customize">Customize</a></div><div>Recents</div></nav>`);
+    setup(`<nav><div id="cust"><a href="/code/customize">Customize</a></div><div>Older</div></nav>`);
     const host = mkHost();
     placeHost(host, document, "/code", ok);
     placeHost(host, document, "/code", ok);
@@ -156,6 +172,57 @@ describe("findAnchor", () => {
   });
 });
 
+describe("before-recents placement", () => {
+  it("chat: host goes immediately before the Recents heading row, after Pinned", () => {
+    setup(CHAT_REAL("Recents"));
+    const a = findAnchor(document, "chat", ok)!;
+    expect(a.via).toBe("before-recents");
+    expect(a.row.id).toBe("rech");
+    const host = mkHost();
+    const r = placeHost(host, document, "/chat/abc", ok);
+    expect(r.placement).toBe("sidebar");
+    expect(host.nextElementSibling?.id).toBe("rech");
+    expect(host.dataset.placement).toBe("before");
+    expect(host.closest(".pinned")).toBeNull();
+    expect(placeHost(host, document, "/chat/abc", ok).changed).toBe(false);
+    expect(document.querySelectorAll(`[${HOST_ATTR}]`)).toHaveLength(1);
+  });
+  it("chat: 'Chats and tasks' variant", () => {
+    setup(CHAT_REAL("Chats and tasks"));
+    const host = mkHost();
+    placeHost(host, document, "/", ok);
+    expect(host.nextElementSibling?.id).toBe("rech");
+  });
+  it("code: More then Recents with a + button -> before Recents row", () => {
+    setup(CODE.replace('<div>Recents</div>', '<div id="rech"><span>Recents</span><button aria-label="New session">+</button></div>'));
+    const host = mkHost();
+    placeHost(host, document, "/code/s1", ok);
+    expect(host.nextElementSibling?.id).toBe("rech");
+  });
+  it("no Recents -> falls back to below More", () => {
+    setup(CHAT_REAL("Archive"));
+    const host = mkHost();
+    placeHost(host, document, "/", ok);
+    expect(host.previousElementSibling?.id).toBe("more");
+  });
+  it("re-attaches before Recents after removal, and moves when Recents renders late", () => {
+    setup(CHAT_REAL("Archive"));
+    const host = mkHost();
+    placeHost(host, document, "/", ok);
+    document.querySelector("#rech span")!.textContent = "Recents";
+    placeHost(host, document, "/", ok);
+    expect(host.nextElementSibling?.id).toBe("rech");
+    host.remove();
+    expect(placeHost(host, document, "/", ok).changed).toBe(true);
+    expect(host.nextElementSibling?.id).toBe("rech");
+  });
+  it("collapsed sidebar -> floating", () => {
+    setup(CHAT_REAL("Recents"));
+    const host = mkHost();
+    expect(placeHost(host, document, "/", { usable: () => false }).placement).toBe("floating");
+  });
+});
+
 describe("placeHost", () => {
   it("inserts as the next sibling of the row, once", () => {
     setup(CHAT);
@@ -180,10 +247,10 @@ describe("placeHost", () => {
     expect(document.querySelectorAll(`[${HOST_ATTR}]`)).toHaveLength(1);
   });
   it("code mode puts it under More; route change moves it", () => {
-    setup(CHAT + CODE);
+    setup(CHAT + CODE_NO_REC);
     const host = mkHost();
     placeHost(host, document, "/", ok);
-    expect(host.previousElementSibling?.id).toBe("cust");
+    expect(host.previousElementSibling?.id).toBe("more");
     const r = placeHost(host, document, "/code/abc", ok);
     expect(r.mode).toBe("code");
     expect(host.previousElementSibling?.id).toBe("more");

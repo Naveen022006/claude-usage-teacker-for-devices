@@ -67,6 +67,9 @@ export interface WidgetState {
   codeDeviceIds: string[];
   hub: { configured: boolean; ok: boolean; error?: string; fetchedAt: number; devices: HubDevice[] };
   now: number;
+  /** Capture diagnostics (counters + redacted path patterns / event-type names only). */
+  captureDiag: CaptureDiag | null;
+  swDiag: SwDiag;
 }
 
 /** Requests from popup / options to the service worker. */

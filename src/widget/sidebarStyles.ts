@@ -29,6 +29,8 @@ export const SIDEBAR_CSS = `
 .sb-bar { height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; margin-top: 6px; }
 .sb-fill { height: 100%; border-radius: 2px; background: var(--blue); min-width: 2px; }
 .sb-none, .sb-msg { color: var(--muted); font-size: 12.5px; }
+.sb-diag { color: var(--muted); font-size: 11.5px; line-height: 1.35; margin-top: 2px; overflow-wrap: anywhere; }
+.sb-diag.cut { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
 .sb-link { background: none; border: 0; padding: 0; color: var(--blue); text-decoration: underline; text-align: left; }
 .sb-sub { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
 .sb-switch { display: inline-flex; align-items: baseline; gap: 5px; }

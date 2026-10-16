@@ -1,8 +1,8 @@
 // Finds where the usage panel goes inside claude.ai's left sidebar and keeps it attached across
 // React re-renders and SPA navigation. DOM-only (no chrome.*), unit-tested with happy-dom fixtures.
 //
-//   chat  (path not starting with /code): directly below the "Customize" row (above "Pinned")
-//   code  (path starting with /code):     directly below the "More" row (above "Recents")
+// Both modes: directly ABOVE the "Recents" (or "Chats and tasks") section heading, i.e. after "Pinned".
+// Fallbacks: below the "More" row, then below "Customize", then the language-tolerant nav heuristic.
 //
 // Selectors here are the fragile part (claude.ai's markup is undocumented): everything fails soft
 // and the caller falls back to the floating pill when no usable anchor is found.
@@ -71,7 +71,7 @@ export function climbToRow(el: Element, root: Element): Element {
 export interface Anchor {
   row: Element;
   /** sibling: code mode without a "More" row (below/at Customize); re-checked for a real "More" row later. */
-  via: "href" | "label" | "fallback" | "sibling";
+  via: "href" | "label" | "fallback" | "sibling" | "before-recents";
 }
 
 export interface FindOptions {
@@ -113,6 +113,37 @@ function rowByHref(doc: Document, frag: string, usable: (e: Element) => boolean)
     if (usable(row)) return row;
   }
   return null;
+}
+
+const RECENTS_KEYS = ["recents", "chatsandtasks"];
+
+/** The "Recents" / "Chats and tasks" section heading row (non-link text, optionally with "+"/filter buttons). */
+function recentsRow(doc: Document, usable: (e: Element) => boolean): Element | null {
+  for (const key of RECENTS_KEYS) {
+    for (const el of labelCandidates(doc, key)) {
+      if (labelKey(el.textContent) !== key) continue; // aria-label-only matches are controls, not headings
+      if (el.closest("a[href]") || el.matches("a[href]")) continue;
+      if (el.closest("main, [role=main]")) continue;
+      const row = climbToRow(el, rootFor(el));
+      if (row.closest("a[href]")) continue;
+      if (usable(row)) return row;
+    }
+  }
+  return null;
+}
+
+/** A nav row near the host used to measure the highlight-box inset / theme (the Recents heading itself is unsuitable). */
+export function styleSampleRow(host: Element, fallback: Element | null): Element | null {
+  try {
+    const root = host.closest("nav, aside") ?? host.ownerDocument.body;
+    for (const a of Array.from(root.querySelectorAll("a[href]"))) {
+      if (inOurHost(a) || !labelKey(a.textContent)) continue;
+      return climbToRow(a, rootFor(a));
+    }
+  } catch {
+    /* ignore */
+  }
+  return fallback;
 }
 
 function isInteractive(el: Element): boolean {
@@ -168,10 +199,22 @@ function navFallback(roots: Element[], usable: (e: Element) => boolean): Element
 // ---- diagnostics (once per page load + mode) ----
 
 const reported = new Set<Mode>();
+const reportedNoRecents = new Set<Mode>();
+
+function reportNoRecents(mode: Mode): void {
+  if (reportedNoRecents.has(mode)) return;
+  reportedNoRecents.add(mode);
+  try {
+    console.info(`[claude-usage] "Recents" heading not found (mode=${mode}); using fallback anchor`);
+  } catch {
+    /* ignore */
+  }
+}
 
 /** Test hook. */
 export function resetAnchorDiagnostics(): void {
   reported.clear();
+  reportedNoRecents.clear();
 }
 
 function reportMissing(doc: Document, mode: Mode): void {
@@ -200,14 +243,16 @@ function reportMissing(doc: Document, mode: Mode): void {
 
 function findAnchorInner(doc: Document, mode: Mode, usable: (e: Element) => boolean): Anchor | null {
   const roots = sidebarRoots(doc);
+  const rec = recentsRow(doc, usable);
+  if (rec) return { row: rec, via: "before-recents" };
+  const more = rowByLabel(doc, "more", usable);
+  if (more) return { row: more, via: "label" };
   if (mode === "chat") {
     const byHref = rowByHref(doc, "/customize", usable);
     if (byHref) return { row: byHref, via: "href" };
     const byLabel = rowByLabel(doc, "customize", usable);
     if (byLabel) return { row: byLabel, via: "label" };
   } else {
-    const more = rowByLabel(doc, "more", usable);
-    if (more) return { row: more, via: "label" };
     const cust = rowByHref(doc, "/customize", usable) ?? rowByLabel(doc, "customize", usable);
     if (cust) {
       let sib = cust.nextElementSibling;
@@ -223,6 +268,7 @@ function findAnchorInner(doc: Document, mode: Mode, usable: (e: Element) => bool
 export function findAnchor(doc: Document, mode: Mode, opts: FindOptions = {}): Anchor | null {
   const a = findAnchorInner(doc, mode, opts.usable ?? isUsableAnchor);
   if (!a) reportMissing(doc, mode);
+  else if (a.via !== "before-recents") reportNoRecents(mode);
   return a;
 }
 
@@ -230,8 +276,13 @@ export function findAnchor(doc: Document, mode: Mode, opts: FindOptions = {}): A
 export function rowMatches(row: Element, mode: Mode, via: string | undefined): boolean {
   if (via === "fallback" || via === "sibling") return true;
   const k = labelKey(row.textContent);
-  if (mode === "code") return k === "more" || labelKey(row.getAttribute("aria-label")) === "more" || !!Array.from(row.querySelectorAll("[aria-label]")).some((e) => labelKey(e.getAttribute("aria-label")) === "more" && k.startsWith("more"));
-  return k === "customize" || !!(row.matches('a[href*="/customize"]') || row.querySelector('a[href*="/customize"]'));
+  if (via === "before-recents") return RECENTS_KEYS.includes(k);
+  const isMore = k === "more" || labelKey(row.getAttribute("aria-label")) === "more" || !!Array.from(row.querySelectorAll("[aria-label]")).some((e) => labelKey(e.getAttribute("aria-label")) === "more" && k.startsWith("more"));
+  if (mode === "code" || via === "label") {
+    if (isMore) return true;
+    if (mode === "code") return false;
+  }
+  return k === "customize" || isMore || !!(row.matches('a[href*="/customize"]') || row.querySelector('a[href*="/customize"]'));
 }
 
 export interface PlaceResult {
@@ -253,17 +304,22 @@ export function placeHost(host: HTMLElement, doc: Document, pathname: string, op
   // Remove stray duplicates (e.g. a second content-script instance after an extension reload).
   for (const d of Array.from(doc.querySelectorAll(`[${HOST_ATTR}]`))) if (d !== host) d.remove();
 
-  const prev = host.previousElementSibling;
-  // Code mode without a real "More" row keeps looking for one (it may render later).
-  const settled = mode === "chat" || host.dataset.via === "label";
-  if (settled && host.isConnected && host.dataset.placement === "sidebar" && host.dataset.mode === mode && prev && prev.isConnected && rowMatches(prev, mode, host.dataset.via) && usable(prev)) {
-    return { placement: "sidebar", mode, row: prev, changed: false };
+  // Anything but the Recents anchor keeps looking for a Recents heading (it may render later).
+  const before = host.dataset.placement === "before";
+  const neighbour = before ? host.nextElementSibling : host.previousElementSibling;
+  const settled = before && host.dataset.via === "before-recents";
+  if (settled && host.isConnected && host.dataset.mode === mode && neighbour && neighbour.isConnected && rowMatches(neighbour, mode, host.dataset.via) && usable(neighbour)) {
+    return { placement: "sidebar", mode, row: neighbour, changed: false };
   }
   const anchor = findAnchor(doc, mode, { usable });
   if (anchor) {
-    const changed = host.previousElementSibling !== anchor.row || !host.isConnected;
-    if (changed) anchor.row.after(host);
-    host.dataset.placement = "sidebar";
+    const isBefore = anchor.via === "before-recents";
+    const changed = !host.isConnected || (isBefore ? host.nextElementSibling !== anchor.row : host.previousElementSibling !== anchor.row);
+    if (changed) {
+      if (isBefore) anchor.row.before(host);
+      else anchor.row.after(host);
+    }
+    host.dataset.placement = isBefore ? "before" : "sidebar";
     host.dataset.mode = mode;
     host.dataset.via = anchor.via;
     return { placement: "sidebar", mode, row: anchor.row, changed };

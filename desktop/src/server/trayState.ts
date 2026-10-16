@@ -1,6 +1,7 @@
 // Pure builder for GET /u/<key>/api/tray (contract: ../shared/tray.ts).
 import type { AccountUsage, Plan } from "../../../src/shared/types";
 import type { AttributionView } from "../../../src/shared/attribution";
+import { NOTE_CLI } from "./accountUsage";
 import { formatTokens, prettyModel, sbTone } from "../../../src/widget/helpers";
 import type { TrayLimit, TrayModel, TrayState } from "../shared/tray";
 
@@ -15,6 +16,7 @@ export interface TrayInput {
   tokensNew5hByModel: Record<string, number>;
   /** Epoch ms until which account polling is backed off (rate limit / errors); null = not backing off. */
   backoffUntil?: number | null;
+  accountKind?: "tray" | "cli" | null;
 }
 
 export const STALE_AFTER_MS = 10 * 60_000;
@@ -31,6 +33,12 @@ export function composeLimitsNote(i: Pick<TrayInput, "now" | "limitsNote" | "acc
     note = note ? `${note} · ${ago} old` : `Updated ${ago} ago`;
   }
   return note;
+}
+
+/** CLI-fallback hint goes after any error/age note. */
+export function withAccountNote(note: string | null, kind: "tray" | "cli" | null): string | null {
+  if (kind !== "cli") return note;
+  return note ? `${note} · ${NOTE_CLI}` : NOTE_CLI;
 }
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
@@ -98,7 +106,8 @@ export function buildTrayState(i: TrayInput): TrayState {
     updatedAt: i.now,
     plan: i.plan,
     limitsSource: i.limitsSource,
-    limitsNote: composeLimitsNote(i),
+    limitsNote: withAccountNote(composeLimitsNote(i), i.accountKind ?? null),
+    accountKind: i.accountKind ?? null,
     limits,
     models: models.slice(0, 6),
     other,

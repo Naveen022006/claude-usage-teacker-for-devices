@@ -36,6 +36,9 @@ beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "um-bo-"));
   mkdirSync(join(tmp, "dist"));
   writeFileSync(join(tmp, "cred.json"), JSON.stringify({ claudeAiOauth: { accessToken: FAKE, expiresAt: Date.now() + 1e10, subscriptionType: "max" } }));
+  // tray-owned sign-in, so notes are not prefixed by the CLI-fallback hint
+  mkdirSync(join(tmp, "data", "claude-auth"), { recursive: true });
+  writeFileSync(join(tmp, "data", "claude-auth", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: FAKE, expiresAt: Date.now() + 1e10, subscriptionType: "max" } }));
   clock = Date.now();
   calls = 0;
   responder = okRes;
@@ -46,7 +49,7 @@ afterEach(async () => {
 });
 
 describe("account source errors", () => {
-  const src = () => createAccountSource({ path: join(tmp, "cred.json"), fetchFn, now: () => clock });
+  const src = () => createAccountSource({ trayDir: null, path: join(tmp, "cred.json"), fetchFn, now: () => clock });
   it("429 with Retry-After seconds and HTTP date", async () => {
     responder = () => new Response("{}", { status: 429, headers: { "retry-after": "120" } });
     expect(await src().poll()).toMatchObject({ kind: "error", note: NOTE_RATE_LIMIT, httpStatus: 429, retryAfterMs: 120_000 });

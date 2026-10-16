@@ -40,6 +40,7 @@ export type DesktopRequest =
   | { type: "refresh" } // immediate usage + scan
   | { type: "set-ui"; ui: Partial<DesktopState["ui"]> }
   | { type: "reset-attribution" }
+  | { type: "auth-status" } // -> { accountKind, plan, signedIn } (no secrets)
   | { type: "quit" };
 
 /** Main → renderer push channel name; payload is DesktopState. */

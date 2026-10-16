@@ -53,3 +53,9 @@ Only counts are read; message text is never stored or sent. The server listens o
 - Preview without the server: `powershell -NoProfile -ExecutionPolicy Bypass -File UsageMeterTray.ps1 -SelfTest`
   writes `selftest.png` / `selftest-icon.png` here (delete them afterwards). Add `-TestScale 1.5` to simulate DPI scaling (writes `selftest-1.5.png`).
 
+
+## Claude account (sign-in)
+
+- Menu: "Sign in to Claude Desktop account..." opens a visible console running `claude auth login` with `CLAUDE_CONFIG_DIR=%APPDATA%\UsageMeterDesktop\claude-auth` (isolated; your normal Claude Code CLI login is not touched). When the window closes the tray asks the server to refresh. "Sign out tray account" (enabled only when the tray login is active) runs `claude auth logout` hidden with the same env.
+- The popup subtitle shows the active account: "Claude Desktop - Max account" (tray login) or "Claude Code CLI account (Pro)" in amber (fallback, with a hint note).
+- Requires the `claude` CLI on PATH.

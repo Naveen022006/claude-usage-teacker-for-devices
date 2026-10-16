@@ -24,7 +24,7 @@ afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
 describe("account usage source", () => {
   it("parses usage and sends the required headers", async () => {
-    const r = await createAccountSource({ path: credFile("ok.json", Date.now() + 3600_000), fetchFn: okFetch }).poll();
+    const r = await createAccountSource({ trayDir: null, path: credFile("ok.json", Date.now() + 3600_000), fetchFn: okFetch }).poll();
     expect(r.kind).toBe("ok");
     if (r.kind !== "ok") return;
     expect(r.plan).toBe("max");
@@ -35,21 +35,21 @@ describe("account usage source", () => {
   });
   it("expired token -> refresh note, no request", async () => {
     let called = false;
-    const r = await createAccountSource({ path: credFile("exp.json", Date.now() - 1000), fetchFn: (() => { called = true; return Promise.reject(new Error("x")); }) as any }).poll();
+    const r = await createAccountSource({ trayDir: null, path: credFile("exp.json", Date.now() - 1000), fetchFn: (() => { called = true; return Promise.reject(new Error("x")); }) as any }).poll();
     expect(r).toMatchObject({ kind: "error", note: NOTE_REFRESH });
     expect(called).toBe(false);
   });
   it("401 and 403 -> refresh note", async () => {
     for (const status of [401, 403]) {
       const f = (() => Promise.resolve(new Response("{}", { status }))) as any;
-      expect(await createAccountSource({ path: credFile("a.json", undefined), fetchFn: f }).poll()).toMatchObject({ kind: "error", note: NOTE_REFRESH });
+      expect(await createAccountSource({ trayDir: null, path: credFile("a.json", undefined), fetchFn: f }).poll()).toMatchObject({ kind: "error", note: NOTE_REFRESH });
     }
   });
   it("missing file -> sign-in note; network error -> offline note", async () => {
-    expect(await createAccountSource({ path: join(tmp, "nope.json"), fetchFn: okFetch }).poll()).toEqual({ kind: "none", note: NOTE_SIGN_IN });
+    expect(await createAccountSource({ trayDir: null, path: join(tmp, "nope.json"), fetchFn: okFetch }).poll()).toEqual({ kind: "none", note: NOTE_SIGN_IN });
     const f = (() => Promise.reject(new Error(`boom ${FAKE}`))) as any;
-    const r = await createAccountSource({ path: credFile("n.json", undefined, "pro"), fetchFn: f }).poll();
-    expect(r).toEqual({ kind: "error", note: NOTE_OFFLINE, plan: "pro" });
+    const r = await createAccountSource({ trayDir: null, path: credFile("n.json", undefined, "pro"), fetchFn: f }).poll();
+    expect(r).toMatchObject({ kind: "error", note: NOTE_OFFLINE, plan: "pro" });
     expect(JSON.stringify(r)).not.toContain(FAKE);
   });
   it("tolerates garbage credentials", () => {

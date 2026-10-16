@@ -147,7 +147,12 @@ function Draw-Popup($g, [double]$scale, $st, [string]$statusText) {
     $pl = ([string]$plan).Substring(0, 1).ToUpper() + ([string]$plan).Substring(1)
     Txt $g ($script:Dot + ' ' + $pl) $script:fSmall ($pad + $hw + (PxS 8)) $y (PxS 100) (PxS 22) $script:cMuted $script:flL
   }
-  Txt $g 'Claude Desktop' $script:fSmall $pad ($y + (PxS 22)) $inner (PxS 16) $script:cMuted $script:flL
+  $ak = [string](Prop $st 'accountKind'); $apl = ''
+  if ($plan) { $apl = ([string]$plan).Substring(0, 1).ToUpper() + ([string]$plan).Substring(1) }
+  $sub = 'Claude Desktop'; $subc = $script:cMuted
+  if ($ak -eq 'tray') { $sub = 'Claude Desktop ' + $script:Dot + ' ' + $apl + ' account'; if (-not $apl) { $sub = 'Claude Desktop account' } }
+  elseif ($ak -eq 'cli') { $sub = 'Claude Code CLI account'; if ($apl) { $sub += ' (' + $apl + ')' }; $subc = $script:cWarn }
+  Txt $g $sub $script:fSmall $pad ($y + (PxS 22)) $inner (PxS 16) $subc $script:flL
   $y += PxS 48
 
   if ($null -eq $st) {
@@ -360,7 +365,8 @@ if ($SelfTest) {
   $now = [datetimeoffset]::UtcNow
   $fake = [pscustomobject]@{
     ok = $true; updatedAt = ($now.ToUnixTimeMilliseconds() - 3000); plan = 'pro'; limitsSource = 'account'
-    limitsNote = 'Open Claude Code once to refresh sign-in'
+    limitsNote = 'Showing Claude Code CLI account ' + [string][char]0x2014 + ' sign in with your Claude Desktop account from the tray menu'
+    accountKind = 'cli'
     limits = @(
       [pscustomobject]@{ label = 'Session (5h)'; pct = 42; resetsAt = $now.AddSeconds(3 * 3600 + 5 * 60).ToString('o'); tone = 'ok' },
       [pscustomobject]@{ label = 'Weekly'; pct = 11; resetsAt = $now.AddSeconds(6 * 86400 + 16 * 3600 + 25 * 60).ToString('o'); tone = 'ok' },
@@ -399,6 +405,13 @@ if ($SelfTest) {
     $r++
   }
   $sg.Dispose(); $strip.Save((Join-Path $dir 'selftest-icon.png'), [System.Drawing.Imaging.ImageFormat]::Png); $strip.Dispose()
+  # second variant: tray-owned Claude Desktop account (Max)
+  $fake.plan = 'max'; $fake.accountKind = 'tray'; $fake.limitsNote = $null
+  $h2 = Measure-Popup $s $fake ''
+  $bmp = New-Object System.Drawing.Bitmap([int](PxS $script:W), $h2)
+  $g = [System.Drawing.Graphics]::FromImage($bmp)
+  [void](Draw-Popup $g $s $fake ''); $g.Dispose()
+  $bmp.Save((Join-Path $dir ('selftest-tray' + $suffix + '.png')), [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
   Write-Output "selftest ok (dpi $dpi, popup height $h)"
   return
 }
@@ -498,6 +511,44 @@ function Refresh-State {
   }
   Update-Icon
   if ($script:Popup.Visible) { Resize-Popup; $script:Popup.Invalidate() }
+}
+function Post-Request([string]$type, [int]$timeout = 20000) {
+  $inst = Read-Instance
+  if ($null -eq $inst) { return $null }
+  return (Http ('http://127.0.0.1:{0}/u/{1}/api/request' -f $inst.port, $inst.key) 'POST' ('{{"type":"{0}"}}' -f $type) $timeout)
+}
+# ---- tray-owned Claude login (official CLI, isolated CLAUDE_CONFIG_DIR; the user's normal CLI login is untouched)
+$script:AuthDir = Join-Path $env:APPDATA 'UsageMeterDesktop\claude-auth'
+$script:AuthProc = $null
+$script:AuthKind = ''
+function Start-ClaudeAuth([string]$kind) {   # kind: login | logout
+  if ($null -ne $script:AuthProc -and -not $script:AuthProc.HasExited) { return }
+  $had = Test-Path Env:CLAUDE_CONFIG_DIR; $old = $env:CLAUDE_CONFIG_DIR
+  try {
+    [void](New-Item -ItemType Directory -Force -Path $script:AuthDir)
+    $env:CLAUDE_CONFIG_DIR = $script:AuthDir   # inherited by the child only; restored right below (no quoting issues with spaces)
+    if ($kind -eq 'login') {
+      $line = 'echo Sign in with the account you use in Claude Desktop (e.g. your Max plan). This window closes when done. & claude auth login & timeout /t 3'
+      $script:AuthProc = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', ('"{0}"' -f $line)) -PassThru
+    } else {
+      $script:AuthProc = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', '"claude auth logout"') -WindowStyle Hidden -PassThru
+    }
+    $script:AuthKind = $kind
+  } catch {
+    $script:AuthProc = $null
+    $script:Ni.ShowBalloonTip(5000, 'Usage Meter', 'Could not start the Claude CLI. Is "claude" on PATH?', [System.Windows.Forms.ToolTipIcon]::Warning)
+  } finally {
+    if ($had) { $env:CLAUDE_CONFIG_DIR = $old } else { Remove-Item Env:CLAUDE_CONFIG_DIR -ErrorAction SilentlyContinue }
+  }
+}
+function Check-ClaudeAuth {   # called from the timer: when the login/logout window ends, tell the server to re-read credentials
+  if ($null -eq $script:AuthProc) { return }
+  $done = $true
+  try { $done = $script:AuthProc.HasExited } catch { }
+  if (-not $done) { return }
+  $script:AuthProc = $null
+  [void](Post-Request 'refresh')
+  Refresh-State
 }
 function Send-Quit {
   $inst = Read-Instance
@@ -603,13 +654,23 @@ $script:Ni.Text = 'Usage Meter: starting' + $script:Ell
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
 $miShow = New-Object System.Windows.Forms.ToolStripMenuItem('Show usage')
+$miSignIn = New-Object System.Windows.Forms.ToolStripMenuItem('Sign in to Claude Desktop account' + $script:Ell)
+$miSignOut = New-Object System.Windows.Forms.ToolStripMenuItem('Sign out tray account')
 $miRefresh = New-Object System.Windows.Forms.ToolStripMenuItem('Refresh')
 $miAuto = New-Object System.Windows.Forms.ToolStripMenuItem('Start with Windows')
 $miQuit = New-Object System.Windows.Forms.ToolStripMenuItem('Quit')
+[void]$menu.Items.Add($miSignIn); [void]$menu.Items.Add($miSignOut); [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 [void]$menu.Items.Add($miShow); [void]$menu.Items.Add($miRefresh); [void]$menu.Items.Add($miAuto)
 [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator)); [void]$menu.Items.Add($miQuit)
 $script:Ni.ContextMenuStrip = $menu
-$menu.Add_Opening({ $miAuto.Checked = (Test-Path (Get-StartupLink)) })
+$menu.Add_Opening({
+  $miAuto.Checked = (Test-Path (Get-StartupLink))
+  $busy = ($null -ne $script:AuthProc)
+  $miSignIn.Enabled = -not $busy
+  $miSignOut.Enabled = ((-not $busy) -and ($null -ne $script:State) -and ((Prop $script:State 'accountKind') -eq 'tray'))
+})
+$miSignIn.Add_Click({ Start-ClaudeAuth 'login' })
+$miSignOut.Add_Click({ Start-ClaudeAuth 'logout' })
 $miShow.Add_Click({ if (-not $script:Popup.Visible) { $script:LastHide = [datetime]::MinValue; Show-Popup } })
 $miRefresh.Add_Click({ Refresh-State })
 $miAuto.Add_Click({
@@ -632,6 +693,7 @@ $script:Timer.Interval = 1000
 $script:Timer.Add_Tick({
   try {
     $script:Tick++
+    Check-ClaudeAuth
     $due = $script:ForceRefresh -or ($script:Tick % 5 -eq 0) -or (($script:Status -ne 'ok') -and ($script:Tick % 2 -eq 0))
     if ($due) { Refresh-State }
     elseif ($script:Popup.Visible) { $script:Popup.Invalidate() }

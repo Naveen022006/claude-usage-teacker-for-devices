@@ -11,7 +11,7 @@ import type { AccountUsage, AccountWindow, Plan } from "../../../src/shared/type
 import { normalizeBase } from "../../../src/sync/hub";
 import type { DesktopRequest, DesktopState } from "../shared/ipc";
 import { createEngine, type Engine } from "../main/engine";
-import { createAccountSource, NOTE_REFRESH } from "./accountUsage";
+import { createAccountSource, NOTE_REFRESH, NOTE_TRAY_SIGN_IN, type RefreshSpawn } from "./accountUsage";
 import { buildTrayState } from "./trayState";
 import type { TrayState } from "../shared/tray";
 import { loadConfig } from "../../../daemon/src/config";
@@ -42,6 +42,10 @@ export interface ServerOpts {
   credentialsPath?: string | null;
   /** Injectable fetch for the account usage API (tests). */
   accountFetch?: typeof fetch;
+  /** Isolated tray-owned CLAUDE_CONFIG_DIR; undefined = <dataDir>/claude-auth; null = disabled. */
+  trayAuthDir?: string | null;
+  /** Injectable runner for the silent `claude auth status` token refresh (tests). */
+  accountSpawn?: RefreshSpawn;
   accountPollMs?: number;
   /** Injectable clock for backoff/staleness (tests). */
   now?: () => number;
@@ -114,7 +118,15 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
   let plan: Plan | null = null;
   let limitsSource: TrayState["limitsSource"] = null;
   let limitsNote: string | null = null;
-  const account = createAccountSource({ path: opts.credentialsPath === null ? join(opts.dataDir, "no-credentials.json") : opts.credentialsPath, fetchFn: opts.accountFetch, now: opts.now });
+  const account = createAccountSource({
+    path: opts.credentialsPath === null ? join(opts.dataDir, "no-credentials.json") : opts.credentialsPath,
+    trayDir: opts.trayAuthDir === undefined ? join(opts.dataDir, "claude-auth") : opts.trayAuthDir,
+    spawnFn: opts.accountSpawn,
+    fetchFn: opts.accountFetch,
+    now: opts.now,
+  });
+  let fingerprint: string | null = null; // identity hash of the account the current readings/ledger belong to
+  let credStamp = account.stamp();
   let accountBusy: Promise<void> | null = null;
   const clock = opts.now ?? Date.now;
   let backoffUntil: number | null = null;
@@ -136,14 +148,16 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
       accountUsage = u;
       limitsSource = "account";
       if (typeof j.plan === "string") plan = j.plan as Plan;
+      if (typeof j.fp === "string") fingerprint = j.fp;
     }
   } catch {
     /* none yet */
   }
   function saveAccount(u: AccountUsage, p: Plan | null): void {
+    // fp = hash of the account identity (no tokens)
     try {
       const tmpFile = `${accountFile}.tmp`;
-      writeFileSync(tmpFile, JSON.stringify({ usage: u, plan: p }));
+      writeFileSync(tmpFile, JSON.stringify({ usage: u, plan: p, fp: fingerprint }));
       renameSync(tmpFile, accountFile);
     } catch {
       /* ignore */
@@ -223,8 +237,22 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
     if (!hubBusy) hubBusy = hubFetch().finally(() => { hubBusy = null; });
     return hubBusy;
   }
+  /** Readings now come from another account: the old ledger/readings no longer apply. */
+  function noteAccount(fp: string | null | undefined): void {
+    if (!fp) return;
+    if (fingerprint !== null && fingerprint !== fp) {
+      engine.resetAttribution();
+      accountUsage = null;
+      failures = 0;
+      backoffUntil = null;
+      logState("account changed, attribution reset");
+    }
+    fingerprint = fp;
+  }
   async function accountFetchOnce(): Promise<void> {
     const r = await account.poll();
+    credStamp = account.stamp();
+    if (r.kind === "ok" || r.kind === "error") noteAccount(r.fingerprint);
     if (r.kind === "ok") {
       accountUsage = r.usage;
       if (r.plan) plan = r.plan;
@@ -239,7 +267,7 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
       if (r.plan) plan = r.plan;
       limitsNote = r.note;
       if (limitsSource === null && !accountUsage) limitsSource = "account";
-      if (r.note === NOTE_REFRESH) {
+      if (r.note === NOTE_REFRESH || r.note === NOTE_TRAY_SIGN_IN) {
         backoffUntil = null;
         logState("sign-in needs refresh");
       } else {
@@ -319,7 +347,16 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
     switch (req?.type) {
       case "get-state":
         return buildState();
+      case "auth-status": {
+        const a = account.inspect();
+        return { accountKind: a.accountKind, plan: a.plan, signedIn: a.accountKind === "tray" };
+      }
       case "refresh":
+        // Sign-in changed (credentials file written/removed): don't wait out a backoff meant for the old sign-in.
+        if (account.stamp() !== credStamp) {
+          backoffUntil = null;
+          failures = 0;
+        }
         await Promise.allSettled([engine.refreshNow(), limitsRefresh()]);
         return buildState();
       case "set-ui": {
@@ -367,7 +404,8 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
         if (rest === "api/state" && req.method === "GET") return json(res, 200, buildState());
         if (rest === "api/tray" && req.method === "GET") {
           const e = engine.snapshot();
-          return json(res, 200, buildTrayState({ now: clock(), backoffUntil, plan, limitsSource, limitsNote, accountUsage, attribution: e.attribution, tokensNew5hByModel: e.tokensNew5hByModel }));
+          const ai = account.inspect();
+          return json(res, 200, buildTrayState({ now: clock(), backoffUntil, plan: ai.plan ?? plan, accountKind: limitsSource === "hub" ? null : ai.accountKind, limitsSource, limitsNote, accountUsage, attribution: e.attribution, tokensNew5hByModel: e.tokensNew5hByModel }));
         }
         if (rest === "api/events" && req.method === "GET") {
           res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive", "X-Content-Type-Options": "nosniff" });

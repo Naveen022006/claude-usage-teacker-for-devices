@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createDesktopLimitsSource, LIMITS_FILE, NOTE_WAITING, readDesktopLimits } from "../src/server/desktopLimits";
+import { ChromeAccounts, CHROME_MAX_AGE_MS, createDesktopLimitsSource, LIMITS_FILE, NOTE_WAITING, readDesktopLimits } from "../src/server/desktopLimits";
 import { startServer, type RunningServer } from "../src/server/server";
 import { composeLimitsNote } from "../src/server/trayState";
 import { isDesktopSession, run, statusText, toLimits } from "../src/statusline/statusline";
@@ -62,7 +62,7 @@ describe("desktop limits source", () => {
     expect(await src.poll()).toEqual({ kind: "none", note: NOTE_WAITING });
     writeFileSync(join(tmp, LIMITS_FILE), "{bad");
     expect(readDesktopLimits(join(tmp, LIMITS_FILE))).toBeNull();
-    writeFileSync(join(tmp, LIMITS_FILE), JSON.stringify({ v: 1, fetchedAt: 5, windows: [{ name: "five_hour", utilization: 30 }, { name: "nope", utilization: 1 }] }));
+    writeFileSync(join(tmp, LIMITS_FILE), JSON.stringify({ v: 1, fetchedAt: 5, windows: [{ name: "five_hour", utilization: 30 }, { name: 5, utilization: 1 }] }));
     const r = await src.poll();
     expect(r.kind).toBe("ok");
     if (r.kind === "ok") {
@@ -103,5 +103,45 @@ describe("server with Claude Desktop limits", () => {
     const usage = { fetchedAt: 0, windows: [] };
     expect(composeLimitsNote({ now: 5 * MIN, limitsNote: null, accountUsage: usage })).toBeNull();
     expect(composeLimitsNote({ now: 30 * MIN, limitsNote: null, accountUsage: usage })).toMatch(/30m/);
+  });
+});
+
+describe("Chrome extension reports (Claude Desktop account via claude.ai)", () => {
+  const rep = (orgId: string, plan: string | null, pct: number, fetchedAt: number) => ({ v: 1, orgId, plan, usage: { fetchedAt, windows: [{ name: "five_hour", utilization: pct, resetsAt: "2030-01-01T00:00:00Z" }, { name: "seven_day", utilization: pct / 2 }] } });
+
+  it("validates reports and picks the highest plan, then the newest", () => {
+    const c = new ChromeAccounts(null);
+    expect(c.accept({ orgId: "../x", usage: {} }, 1)).toBe(false);
+    expect(c.accept(rep("org-free", "free", 10, 100), 1000)).toBe(true);
+    expect(c.accept(rep("org-pro", "pro", 50, 200), 1000)).toBe(true);
+    expect(c.accept(rep("org-max", "max", 30, 150), 1000)).toBe(true);
+    expect(c.best(2000)?.orgId).toBe("org-max");
+    expect(c.accept(rep("org-max", "max", 20, 100), 1000)).toBe(true); // older reading ignored
+    expect(c.best(2000)?.usage.windows[0].utilization).toBe(30);
+    expect(c.best(1000 + CHROME_MAX_AGE_MS + 1)).toBeNull(); // too old
+  });
+
+  it("persists across restarts", () => {
+    const file = join(tmp, "chrome.json");
+    new ChromeAccounts(file).accept(rep("org-max", "max", 42, 100), 1000);
+    expect(new ChromeAccounts(file).best(2000)?.plan).toBe("max");
+  });
+
+  it("server accepts reports only from extension origins and shows them as Claude Desktop limits", async () => {
+    mkdirSync(join(tmp, "dist"), { recursive: true });
+    const s = await startServer({ dataDir: join(tmp, "data"), projectsDir: join(tmp, "projects"), distDir: join(tmp, "dist"), hub: null, port: 0, accountPollMs: 3_600_000, scanIntervalMs: 3_600_000 });
+    try {
+      const url = new URL("/api/local-account", s.url).href;
+      const body = JSON.stringify(rep("org-max", "max", 64, Date.now()));
+      expect((await fetch(url, { method: "POST", body, headers: { "content-type": "application/json" } })).status).toBe(403);
+      expect((await fetch(url, { method: "POST", body, headers: { "content-type": "application/json", origin: "chrome-extension://abc" } })).status).toBe(200);
+      await s.limitsRefresh();
+      const t = (await (await fetch(`${s.url}api/tray`)).json()) as TrayState;
+      expect(t.plan).toBe("max");
+      expect(t.limits.find((l) => l.label === "Session (5h)")?.pct).toBe(64);
+      expect(t.limitsNote).toBeNull();
+    } finally {
+      await s.close();
+    }
   });
 });

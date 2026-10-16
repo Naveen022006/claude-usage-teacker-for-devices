@@ -70,8 +70,10 @@ export function buildTrayState(i: TrayInput): TrayState {
     limits.push({ label: d.label, pct, resetsAt: w?.resetsAt ?? null, tone: pct === null ? "ok" : sbTone(pct) });
   }
 
-  const a5 = i.attribution.five_hour;
-  const aw = i.attribution.seven_day;
+  // Per-model % only make sense next to a current plan reading; without one, show tokens only.
+  const hasLimits = !!i.accountUsage?.windows.length;
+  const a5 = hasLimits ? i.attribution.five_hour : undefined;
+  const aw = hasLimits ? i.attribution.seven_day : undefined;
   const ids = new Set<string>([...Object.keys(a5?.byModel ?? {}), ...Object.keys(aw?.byModel ?? {}), ...Object.keys(i.tokensNew5hByModel)]);
   const models: TrayModel[] = [];
   for (const id of ids) {

@@ -12,7 +12,7 @@ import { normalizeBase } from "../../../src/sync/hub";
 import type { DesktopRequest, DesktopState } from "../shared/ipc";
 import { createEngine, type Engine } from "../main/engine";
 import { NOTE_REFRESH, NOTE_TRAY_SIGN_IN, type AccountSource, type RefreshSpawn } from "./accountUsage";
-import { createDesktopLimitsSource } from "./desktopLimits";
+import { CHROME_FILE, ChromeAccounts, createDesktopLimitsSource } from "./desktopLimits";
 import { buildTrayState } from "./trayState";
 import type { TrayState } from "../shared/tray";
 import { loadConfig } from "../../../daemon/src/config";
@@ -114,7 +114,8 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
   let limitsSource: TrayState["limitsSource"] = null;
   let limitsNote: string | null = null;
   // Plan limits come ONLY from Claude Desktop (statusLine → desktop-limits.json). No CLI / tray login, no hub.
-  const account: AccountSource = opts.accountSource ?? createDesktopLimitsSource({ dataDir: opts.dataDir });
+  const chromeAccounts = new ChromeAccounts(join(opts.dataDir, CHROME_FILE));
+  const account: AccountSource = opts.accountSource ?? createDesktopLimitsSource({ dataDir: opts.dataDir, chrome: chromeAccounts, now: opts.now });
   let fingerprint: string | null = null; // identity hash of the account the current readings/ledger belong to
   let credStamp = account.stamp();
   let accountBusy: Promise<void> | null = null;
@@ -378,6 +379,19 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
         if (!hostOk(req)) return send(res, 403, "forbidden");
         const u = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
         if (u.pathname === "/health" && req.method === "GET") return json(res, 200, { app: APP_NAME });
+        // Plan usage from the Chrome extension (signed in to the Claude Desktop account). Extension origins only.
+        if (u.pathname === "/api/local-account" && req.method === "POST") {
+          if (!String(req.headers.origin ?? "").startsWith("chrome-extension://")) return send(res, 403, "forbidden");
+          let body: unknown;
+          try {
+            body = JSON.parse(await readBody(req));
+          } catch {
+            return send(res, 400, "bad request");
+          }
+          if (!chromeAccounts.accept(body, (opts.now ?? Date.now)())) return send(res, 400, "invalid");
+          void limitsRefresh();
+          return json(res, 200, { ok: true });
+        }
         if (!u.pathname.startsWith("/u/")) return send(res, 404, "not found");
         const k = u.pathname.split("/")[2] ?? "";
         if (!safeEq(k, key)) return send(res, 403, "forbidden");

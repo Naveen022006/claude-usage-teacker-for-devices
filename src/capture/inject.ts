@@ -1,11 +1,12 @@
 // MAIN world, document_start. Observes claude.ai completion streams via tee(); never alters them.
 // A response is a candidate when it is a same-origin /api/ call AND (URL matches the known completion regex
-// OR the response is text/event-stream). Only lengths and event names are kept, never text.
+// OR the response is text/event-stream). Only chat-completion paths are recorded;
+// other event streams are observed for diagnostics only. Only lengths and event names are kept, never text.
 
 import { NS } from "../shared/messages";
 import type { PageMessage } from "../shared/messages";
 import type { DiagObservation } from "../shared/types";
-import { createClaudeStreamParser, isCompletionUrl, parseRequestMetaAny } from "./claudeParser";
+import { createClaudeStreamParser, isChatCompletionPath, isCompletionUrl, parseRequestMetaAny } from "./claudeParser";
 import type { RequestMeta } from "./claudeParser";
 import { DiagState, pathPattern } from "./diag";
 import { SseParser } from "./sse";
@@ -162,6 +163,9 @@ function wrap(orig: typeof fetch): typeof fetch {
       const candidate = matched || isSse;
       if (!candidate) {
         obs.reason = "not a completion URL and not text/event-stream";
+      } else if (!matched && !isChatCompletionPath(u.href)) {
+        // Observed for diagnostics only: background streams (title generation, suggestions) must not count as usage.
+        obs.reason = "not a chat completion path";
       } else if (!res.ok) {
         obs.reason = `HTTP ${res.status} (not a reply)`; // e.g. 429 carries a JSON error
       } else if (!res.body) {

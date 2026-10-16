@@ -17,6 +17,21 @@ export function isCompletionUrl(url: string): boolean {
   return typeof url === "string" && COMPLETION_RE.test(url);
 }
 
+/** Final path segment is a chat completion (completion, retry_completion, completion_v2, ...); query ignored. */
+const CHAT_COMPLETION_PATH_RE = /\/chat_conversations\/[^/]+\/(retry_)?completion(?:[_-]?v?\d+)?$/;
+
+/** True only for URLs whose streams are real chat replies (not title generation, suggestions, etc.). */
+export function isChatCompletionPath(url: string): boolean {
+  if (typeof url !== "string" || !url) return false;
+  let path = url;
+  try {
+    path = new URL(url, "https://claude.ai").pathname;
+  } catch {
+    path = url.split(/[?#]/)[0] ?? "";
+  }
+  return CHAT_COMPLETION_PATH_RE.test(path) || COMPLETION_RE.test(url);
+}
+
 const ORG_PATH_RE = /\/api\/organizations\/([^/?#]+)/;
 
 function isObj0(v: unknown): v is Record<string, unknown> {

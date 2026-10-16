@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { SseParser } from "../src/capture/sse";
-import { createClaudeStreamParser, parseRequestMeta, parseRequestMetaAny } from "../src/capture/claudeParser";
+import { createClaudeStreamParser, isChatCompletionPath, parseRequestMeta, parseRequestMetaAny } from "../src/capture/claudeParser";
 import { DiagState, pathPattern } from "../src/capture/diag";
 import { explainCapturedEventError, validateDiag, validatePageMessage } from "../src/shared/validate";
 
@@ -111,5 +111,60 @@ describe("diag validation", () => {
   it("explains event rejection reasons", () => {
     expect(explainCapturedEventError({ id: "a", model: "", ts: 1 })).toBe("bad model");
     expect(explainCapturedEventError(null)).toBe("payload is not an object");
+  });
+});
+
+describe("only chat completion paths are recorded", () => {
+  const O = "https://claude.ai/api/organizations/org-1/chat_conversations/c1/";
+  it.each([
+    ["completion", true], ["retry_completion", true], ["completion_v2", true], ["completion?x=1", true],
+    ["title", false], ["suggestions", false],
+  ])("isChatCompletionPath %s", (s, ok) => {
+    expect(isChatCompletionPath(O + s)).toBe(ok);
+  });
+
+  async function drive(path: string, model: string) {
+    vi.resetModules();
+    const posted: any[] = [];
+    const sse =
+      `data: {"type":"message_start","message":{"id":"m1","model":"${model}"}}\n\n` +
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}\n\n' +
+      'data: {"type":"message_stop"}\n\n';
+    const fake = async () =>
+      new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+    const w: any = { fetch: fake, postMessage: (m: any) => posted.push(m) };
+    vi.stubGlobal("window", w);
+    vi.stubGlobal("location", { origin: "https://claude.ai", href: "https://claude.ai/chat/c1" });
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    await import("../src/capture/inject");
+    const res: Response = await w.fetch("https://claude.ai" + path, { method: "POST", body: "{}" });
+    await res.text();
+    await new Promise((r) => setTimeout(r, 1200));
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    const events = posted.filter((m) => m.type === "usage-event").map((m) => m.payload);
+    const diags = posted.filter((m) => m.type === "diag");
+    return { events, obs: diags[diags.length - 1]?.payload.observations ?? [] };
+  }
+  const base = "/api/organizations/6f1c2d3e-1111-4222-8333-444455556666/chat_conversations/0a1b2c3d-1111-4222-8333-444455556666/";
+
+  it("title-generation stream is observed but not recorded", async () => {
+    const r = await drive(base + "title", "claude-haiku-5-5");
+    expect(r.events).toHaveLength(0);
+    expect(r.obs[0]).toMatchObject({ pathPattern: "/api/organizations/:id/chat_conversations/:id/title", recorded: false, reason: "not a chat completion path" });
+  });
+  it("completion is recorded", async () => {
+    const r = await drive(base + "completion", "claude-sonnet-5-5");
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0]).toMatchObject({ model: "claude-sonnet-5-5", kind: "new" });
+    expect(r.obs[0].recorded).toBe(true);
+  });
+  it("retry_completion is recorded as retry", async () => {
+    const r = await drive(base + "retry_completion", "claude-sonnet-5-5");
+    expect(r.events[0]).toMatchObject({ kind: "retry" });
+  });
+  it("completion_v2 is recorded", async () => {
+    const r = await drive(base + "completion_v2", "claude-sonnet-5-5");
+    expect(r.events).toHaveLength(1);
   });
 });

@@ -10,6 +10,8 @@ mkdirSync(p("dist"), { recursive: true });
 const common = { bundle: true, sourcemap: false, logLevel: "info", target: "es2022" };
 
 await build({ ...common, entryPoints: [p("src/server/main.ts")], outfile: p("dist/server.cjs"), platform: "node", format: "cjs", target: "node22" });
+// Claude Code statusLine command: records Claude Desktop sessions' plan limits for the tray.
+await build({ ...common, entryPoints: [p("src/statusline/statusline.ts")], outfile: p("dist/statusline.cjs"), platform: "node", format: "cjs", target: "node22" });
 
 const rendererEntry = p("src/renderer/renderer.ts");
 if (existsSync(rendererEntry)) {

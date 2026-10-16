@@ -16,7 +16,7 @@ export interface TrayInput {
   tokensNew5hByModel: Record<string, number>;
   /** Epoch ms until which account polling is backed off (rate limit / errors); null = not backing off. */
   backoffUntil?: number | null;
-  accountKind?: "tray" | "cli" | null;
+  accountKind?: "tray" | "cli" | "desktop" | null;
 }
 
 export const STALE_AFTER_MS = 10 * 60_000;
@@ -36,7 +36,7 @@ export function composeLimitsNote(i: Pick<TrayInput, "now" | "limitsNote" | "acc
 }
 
 /** CLI-fallback hint goes after any error/age note. */
-export function withAccountNote(note: string | null, kind: "tray" | "cli" | null): string | null {
+export function withAccountNote(note: string | null, kind: "tray" | "cli" | "desktop" | null): string | null {
   if (kind !== "cli") return note;
   return note ? `${note} · ${NOTE_CLI}` : NOTE_CLI;
 }

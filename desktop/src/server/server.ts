@@ -11,14 +11,15 @@ import type { AccountUsage, AccountWindow, Plan } from "../../../src/shared/type
 import { normalizeBase } from "../../../src/sync/hub";
 import type { DesktopRequest, DesktopState } from "../shared/ipc";
 import { createEngine, type Engine } from "../main/engine";
-import { createAccountSource, NOTE_REFRESH, NOTE_TRAY_SIGN_IN, type RefreshSpawn } from "./accountUsage";
+import { NOTE_REFRESH, NOTE_TRAY_SIGN_IN, type AccountSource, type RefreshSpawn } from "./accountUsage";
+import { createDesktopLimitsSource } from "./desktopLimits";
 import { buildTrayState } from "./trayState";
 import type { TrayState } from "../shared/tray";
 import { loadConfig } from "../../../daemon/src/config";
 
 export const APP_NAME = "usage-meter-desktop";
 export const DEFAULT_PORT = 47823;
-const POLL_MS = 3 * 60_000;
+const POLL_MS = 15_000; // local file read (statusLine output), cheap
 const BACKOFF_STEPS_MS = [2, 4, 8, 15].map((m) => m * 60_000);
 const SSE_KEEPALIVE_MS = 25_000;
 const MIME: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png" };
@@ -38,14 +39,8 @@ export interface ServerOpts {
   hub?: HubConf | null;
   port?: number;
   hubPollMs?: number;
-  /** Claude Code credentials file; undefined = default location; null = none. Read only. */
-  credentialsPath?: string | null;
-  /** Injectable fetch for the account usage API (tests). */
-  accountFetch?: typeof fetch;
-  /** Isolated tray-owned CLAUDE_CONFIG_DIR; undefined = <dataDir>/claude-auth; null = disabled. */
-  trayAuthDir?: string | null;
-  /** Injectable runner for the silent `claude auth status` token refresh (tests). */
-  accountSpawn?: RefreshSpawn;
+  /** Plan-limits source; default = Claude Desktop statusLine file (desktop-limits.json). Injectable for tests. */
+  accountSource?: AccountSource;
   accountPollMs?: number;
   /** Injectable clock for backoff/staleness (tests). */
   now?: () => number;
@@ -118,13 +113,8 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
   let plan: Plan | null = null;
   let limitsSource: TrayState["limitsSource"] = null;
   let limitsNote: string | null = null;
-  const account = createAccountSource({
-    path: opts.credentialsPath === null ? join(opts.dataDir, "no-credentials.json") : opts.credentialsPath,
-    trayDir: opts.trayAuthDir === undefined ? join(opts.dataDir, "claude-auth") : opts.trayAuthDir,
-    spawnFn: opts.accountSpawn,
-    fetchFn: opts.accountFetch,
-    now: opts.now,
-  });
+  // Plan limits come ONLY from Claude Desktop (statusLine → desktop-limits.json). No CLI / tray login, no hub.
+  const account: AccountSource = opts.accountSource ?? createDesktopLimitsSource({ dataDir: opts.dataDir });
   let fingerprint: string | null = null; // identity hash of the account the current readings/ledger belong to
   let credStamp = account.stamp();
   let accountBusy: Promise<void> | null = null;
@@ -254,6 +244,7 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
     credStamp = account.stamp();
     if (r.kind === "ok" || r.kind === "error") noteAccount(r.fingerprint);
     if (r.kind === "ok") {
+      const fresh = !accountUsage || r.usage.fetchedAt > accountUsage.fetchedAt;
       accountUsage = r.usage;
       if (r.plan) plan = r.plan;
       limitsSource = "account";
@@ -262,7 +253,7 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
       backoffUntil = null;
       saveAccount(r.usage, r.plan ?? plan);
       logState("ok");
-      engine.applyAccountUsage(r.usage, r.usage.fetchedAt);
+      if (fresh) engine.applyAccountUsage(r.usage, r.usage.fetchedAt);
     } else if (r.kind === "error") {
       if (r.plan) plan = r.plan;
       limitsNote = r.note;
@@ -276,9 +267,6 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
         backoffUntil = clock() + wait;
         logState(`${r.httpStatus === 429 ? "rate-limited" : r.httpStatus ? `HTTP ${r.httpStatus}` : "unreachable"}, retrying after ${hhmm(backoffUntil)}`);
       }
-    } else if (hub) {
-      limitsNote = null;
-      await hubFetch();
     } else {
       limitsNote = r.note;
     }

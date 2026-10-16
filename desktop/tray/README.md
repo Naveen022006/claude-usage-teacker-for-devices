@@ -56,6 +56,5 @@ Only counts are read; message text is never stored or sent. The server listens o
 
 ## Claude account (sign-in)
 
-- Menu: "Sign in to Claude Desktop account..." opens a visible console running `claude auth login` with `CLAUDE_CONFIG_DIR=%APPDATA%\UsageMeterDesktop\claude-auth` (isolated; your normal Claude Code CLI login is not touched). When the window closes the tray asks the server to refresh. "Sign out tray account" (enabled only when the tray login is active) runs `claude auth logout` hidden with the same env.
 - The popup subtitle shows the active account: "Claude Desktop - Max account" (tray login) or "Claude Code CLI account (Pro)" in amber (fallback, with a hint note).
 - Requires the `claude` CLI on PATH.

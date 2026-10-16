@@ -32,7 +32,7 @@ export interface TrayState {
   /** Short human message when limits are unavailable, e.g. "Open Claude Code once to refresh sign-in". */
   limitsNote: string | null;
   /** Which Claude sign-in feeds Session/Weekly: the tray-owned Claude Desktop-account login, the Claude Code CLI login, or none. */
-  accountKind?: "tray" | "cli" | null;
+  accountKind?: "tray" | "cli" | "desktop" | null;
   limits: TrayLimit[]; // always includes Session (5h) and Weekly (pct null when unknown)
   models: TrayModel[]; // sorted by pct5h desc, then tokens desc; max 6
   /** true when per-model points include a baseline split estimated from local events (tray shows "≈"). */

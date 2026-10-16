@@ -33,4 +33,6 @@ the Usage Hub web app (`hub/`, Next.js on Vercel). Read all of `docs/` before co
 `daemon/dist/claude-usage-daemon.mjs`, `npm run mock` plus `npm run daemon -- once` shows the
 devices in `GET /api/state`, and sending 3 messages on claude.ai shows 3 messages with the right
 model in the popup, and the widget on claude.ai shows the messages under the right model
-(with Claude Code / Desktop devices from the hub appearing in it).
+(with Claude Code / Desktop devices from the hub appearing in it). The usage panel must sit in the claude.ai
+sidebar: below "Customize" on chat pages and below "More" on /code pages (floating pill only as fallback); check it with
+`dist/widget-preview.html?mode=chat|code&theme=dark|light` and on the real site (selectors in `src/widget/anchor.ts` are the fragile part).

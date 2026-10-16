@@ -69,6 +69,7 @@ export interface Settings {
   hubToken: string; // sent as "Authorization: Bearer <token>" when non-empty
   pollAccountUsage: boolean;
   showWidget: boolean; // in-page widget on claude.ai
+  codeDeviceIds: string[]; // hub devices counted as "Claude Code on this computer"; [] = auto (all claude-code/desktop)
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -78,6 +79,7 @@ export const DEFAULT_SETTINGS: Settings = {
   hubToken: "",
   pollAccountUsage: true,
   showWidget: true,
+  codeDeviceIds: [],
 };
 
 export interface SyncState {

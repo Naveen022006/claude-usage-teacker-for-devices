@@ -61,6 +61,7 @@ export interface WidgetState {
   accountUsage: AccountUsage | null;
   syncState: SyncState;
   showWidget: boolean;
+  codeDeviceIds: string[];
   hub: { configured: boolean; ok: boolean; error?: string; fetchedAt: number; devices: HubDevice[] };
   now: number;
 }
@@ -69,6 +70,7 @@ export interface WidgetState {
 export type UiRequest =
   | { type: "get-state" }
   | { type: "save-settings"; settings: Partial<Settings>; deviceName?: string }
+  | { type: "get-hub-devices" }
   | { type: "test-connection" }
   | { type: "sync-now" }
   | { type: "export-data" }
@@ -89,6 +91,7 @@ export type UiResponse<T = unknown> = { ok: true; data: T } | { ok: false; error
 export interface UiResponseData {
   "get-state": UiState;
   "save-settings": UiState;
+  "get-hub-devices": WidgetState["hub"];
   "test-connection": { reachable: boolean; detail: string };
   "sync-now": SyncState;
   "export-data": { json: string };

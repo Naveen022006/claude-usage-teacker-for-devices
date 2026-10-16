@@ -4,7 +4,7 @@ import type { Aggregates, WindowAggregate } from "../src/shared/types";
 import { parseHubState } from "../src/sync/hub";
 import {
   formatAgo,
-  formatCountdown,
+  formatResetsIn,
   formatPct,
   formatTokens,
   humanizeWindow,
@@ -44,13 +44,13 @@ describe("widget helpers", () => {
   it("formats countdowns", () => {
     const now = Date.parse("2026-01-01T00:00:00Z");
     const at = (ms: number) => new Date(now + ms).toISOString();
-    expect(formatCountdown(at(2 * 3600_000 + 14 * 60_000), now)).toBe("2h 14m");
-    expect(formatCountdown(at(14 * 60_000), now)).toBe("14m");
-    expect(formatCountdown(at(30_000), now)).toBe("1m");
-    expect(formatCountdown(at(-5000), now)).toBe("now");
-    expect(formatCountdown(at(3 * 86400_000 + 4 * 3600_000), now)).toBe("3d 4h");
-    expect(formatCountdown(undefined, now)).toBe("");
-    expect(formatCountdown("garbage", now)).toBe("");
+    expect(formatResetsIn(at(2 * 3600_000 + 14 * 60_000), now)).toBe("2h 14m");
+    expect(formatResetsIn(at(14 * 60_000), now)).toBe("14m");
+    expect(formatResetsIn(at(30_000), now)).toBe("1m");
+    expect(formatResetsIn(at(-5000), now)).toBe("now");
+    expect(formatResetsIn(at(3 * 86400_000 + 4 * 3600_000), now)).toBe("3d 4h");
+    expect(formatResetsIn(undefined, now)).toBe("");
+    expect(formatResetsIn("garbage", now)).toBe("");
   });
   it("formats ago, tokens, pct, model", () => {
     expect(formatAgo(1000, 13_000)).toBe("12s ago");

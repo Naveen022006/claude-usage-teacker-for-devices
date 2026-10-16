@@ -39,4 +39,8 @@ button:disabled { opacity: .55; cursor: default; }
 #status.ok { color: var(--ok); } #status.warn { color: var(--warn); } #status.bad { color: var(--bad); }
 .small { font-size: 12px; color: var(--muted); }
 output { font-variant-numeric: tabular-nums; }
+fieldset.devices { border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; margin: 0 0 14px; }
+fieldset.devices legend { font-weight: 600; padding: 0 4px; }
+.devlist { display: grid; gap: 4px; margin-bottom: 6px; }
+.devlist label { display: flex; align-items: center; gap: 8px; }
 code { font-size: 11px; word-break: break-all; }

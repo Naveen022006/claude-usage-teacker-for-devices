@@ -11,6 +11,8 @@ const cptOut = $<HTMLOutputElement>("cptOut");
 const pollEl = $<HTMLInputElement>("poll");
 const widgetEl = $<HTMLInputElement>("showWidget");
 const statusEl = $("status");
+const devicesEl = $("codeDevices");
+let codeIds = new Set<string>();
 
 function setStatus(msg: string, kind: "" | "ok" | "warn" | "bad" = ""): void {
   statusEl.textContent = msg;
@@ -47,6 +49,30 @@ function fill(s: Settings): void {
   cptOut.textContent = Number(s.charsPerToken).toFixed(1);
   pollEl.checked = s.pollAccountUsage;
   widgetEl.checked = s.showWidget;
+  codeIds = new Set(s.codeDeviceIds ?? []);
+  void loadHubDevices();
+}
+
+async function loadHubDevices(): Promise<void> {
+  const res = await callSw({ type: "get-hub-devices" });
+  devicesEl.replaceChildren();
+  const note = (t: string) => devicesEl.append(Object.assign(document.createElement("span"), { textContent: t, className: "small" }));
+  if (!res.ok) return note("Could not load devices: " + res.error);
+  if (!res.data.configured) return note("Connect your Usage Hub above to list devices.");
+  if (!res.data.ok) return note("Hub unreachable: " + (res.data.error ?? "unknown error"));
+  const list = res.data.devices.filter((d) => d.source === "claude-code" || d.source === "desktop");
+  if (!list.length) return note("No Claude Code or Desktop devices reported to the hub yet.");
+  for (const d of list) {
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = codeIds.has(d.deviceId);
+    cb.addEventListener("change", () => (cb.checked ? codeIds.add(d.deviceId) : codeIds.delete(d.deviceId)));
+    const label = document.createElement("label");
+    const span = document.createElement("span");
+    span.textContent = `${d.deviceName || d.deviceId.slice(0, 8)} (${d.source === "desktop" ? "Desktop" : "Claude Code"})${d.fresh ? "" : " - stale"}`;
+    label.append(cb, span);
+    devicesEl.append(label);
+  }
 }
 
 async function load(): Promise<void> {
@@ -69,6 +95,7 @@ function currentSettings(): Partial<Settings> {
     charsPerToken: Number(cptEl.value),
     pollAccountUsage: pollEl.checked,
     showWidget: widgetEl.checked,
+    codeDeviceIds: [...codeIds].slice(0, 20),
   };
 }
 

@@ -47,8 +47,8 @@ export function sortWindows(ws: AccountWindow[]): AccountWindow[] {
   return ws.slice().sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name));
 }
 
-/** "2h 14m", "14m", "3d 4h", "now"; "" if unknown/invalid. */
-export function formatCountdown(iso: string | undefined, now: number): string {
+/** "2h 14m", "14m", "3d 4h", "now"; "" if unknown/invalid. (floating widget) */
+export function formatResetsIn(iso: string | undefined, now: number): string {
   if (!iso) return "";
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return "";
@@ -155,4 +155,109 @@ export function totalsLine(w: WindowAggregate, estimated: boolean): string {
 export function pillLabel(ws: AccountWindow[] | undefined): string {
   const w = ws?.find((x) => x.name === "five_hour");
   return w ? `5h ${formatPct(w.utilization)}` : "Usage";
+}
+
+// ---- sidebar panel helpers ----
+
+/** Live countdown: "2:14:05" under 24 h, "3d 4h 12m" beyond, "now" when elapsed. */
+export function formatCountdown(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "now";
+  const total = Math.ceil(ms / 1000);
+  const d = Math.floor(total / 86400);
+  const h = Math.floor((total % 86400) / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  if (d >= 1) return `${d}d ${h}h ${m}m`;
+  const two = (n: number) => String(n).padStart(2, "0");
+  return `${h}:${two(m)}:${two(sec)}`;
+}
+
+/** ms until an ISO timestamp, or null if missing/invalid. */
+export function msUntil(iso: string | undefined, now: number): number | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? t - now : null;
+}
+
+export interface ModelShare {
+  model: string;
+  pct: number; // integer, all shares sum to exactly 100
+  tokens: number;
+  messages: number;
+}
+
+/** Share of each model by tokens (messages if no tokens at all), largest-remainder rounded, sorted desc. */
+export function modelShares(byModel: WindowAggregate["byModel"]): ModelShare[] {
+  const entries = Object.entries(byModel ?? {}).map(([m, v]) => ({ model: shortModel(m), tokens: v?.tokens || 0, messages: v?.messages || 0 }));
+  const byTokens = entries.some((e) => e.tokens > 0);
+  const weight = (e: { tokens: number; messages: number }) => (byTokens ? e.tokens : e.messages);
+  const rows = entries.filter((e) => weight(e) > 0);
+  const total = rows.reduce((a, e) => a + weight(e), 0);
+  if (!total) return [];
+  const raw = rows.map((e) => ({ e, exact: (weight(e) / total) * 100 }));
+  const out = raw.map((r) => ({ ...r, pct: Math.floor(r.exact) }));
+  let left = 100 - out.reduce((a, r) => a + r.pct, 0);
+  [...out]
+    .sort((a, b) => b.exact - b.pct - (a.exact - a.pct) || weight(b.e) - weight(a.e))
+    .forEach((r) => {
+      if (left > 0) {
+        r.pct += 1;
+        left -= 1;
+      }
+    });
+  return out
+    .map((r) => ({ model: r.e.model, pct: r.pct, tokens: r.e.tokens, messages: r.e.messages }))
+    .sort((a, b) => b.pct - a.pct || b.tokens - a.tokens || a.model.localeCompare(b.model));
+}
+
+export const CODE_SOURCES: Source[] = ["claude-code", "desktop"];
+
+export interface CombinedDevices {
+  windows: Aggregates;
+  devices: HubDevice[];
+  exact: boolean; // false if any combined device reports estimates
+}
+
+const emptyWin = (): WindowAggregate => ({ messages: 0, promptTokens: 0, outputTokens: 0, byModel: {} });
+
+/**
+ * Sums selected hub devices. `ids` non-empty -> exactly those devices; empty + auto -> all devices whose
+ * source is claude-code or desktop; empty + !auto -> none.
+ */
+export function combineDevices(devices: HubDevice[], ids: string[], auto = true): CombinedDevices {
+  const picked = ids.length ? devices.filter((d) => ids.includes(d.deviceId)) : auto ? devices.filter((d) => CODE_SOURCES.includes(d.source)) : [];
+  const windows: Aggregates = { today: emptyWin(), last5h: emptyWin(), last7d: emptyWin() };
+  for (const d of picked) {
+    for (const k of ["today", "last5h", "last7d"] as const) {
+      const src = d.windows[k];
+      const dst = windows[k];
+      dst.messages += src.messages;
+      dst.promptTokens += src.promptTokens;
+      dst.outputTokens += src.outputTokens;
+      for (const [m, v] of Object.entries(src.byModel)) {
+        const cur = (dst.byModel[m] ??= { messages: 0, tokens: 0 });
+        cur.messages += v.messages;
+        cur.tokens += v.tokens;
+      }
+    }
+  }
+  return { windows, devices: picked, exact: picked.every((d) => !d.estimated) };
+}
+
+export function pickWindow(a: Aggregates, tab: TabId): WindowAggregate {
+  return a[TABS.find((t) => t.id === tab)?.window ?? "last5h"];
+}
+
+/** "dark" when the (sidebar) text colour is light, else "light". Accepts rgb()/rgba()/color(srgb ...). */
+export function themeFromColor(css: string): "dark" | "light" | null {
+  const nums = css.match(/-?\d*\.?\d+/g)?.map(Number);
+  if (!nums || nums.length < 3) return null;
+  let [r, g, b] = nums;
+  if (/^color\(/i.test(css.trim())) [r, g, b] = [r * 255, g * 255, b * 255];
+  const lin = (c: number) => {
+    const v = Math.min(255, Math.max(0, c)) / 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  };
+  const lum = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  return lum > 0.4 ? "dark" : "light"; // light text => dark theme
 }

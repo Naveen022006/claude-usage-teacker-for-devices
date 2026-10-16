@@ -3,11 +3,19 @@
 // claude.ai requests. Everything fails soft. No innerHTML anywhere (dynamic data uses textContent).
 
 import { NS, type UiResponse, type WidgetState } from "../shared/messages";
+import type { WindowAggregate } from "../shared/types";
+import { HOST_ATTR, detectMode, placeHost, watchPlacement, type Mode, type Placement } from "./anchor";
 import {
   TABS,
   clampPct,
+  combineDevices,
   formatAgo,
   formatCountdown,
+  formatResetsIn,
+  modelShares,
+  msUntil,
+  pickWindow,
+  themeFromColor,
   formatPct,
   formatTokens,
   humanizeWindow,
@@ -21,6 +29,7 @@ import {
   type TabId,
 } from "./helpers";
 import { WIDGET_CSS } from "./styles";
+import { SIDEBAR_CSS } from "./sidebarStyles";
 
 const LOG = "[claude-usage]";
 const UI_KEY = "widgetUi";
@@ -29,10 +38,14 @@ const REFRESH_CLOSED_MS = 60_000;
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 interface UiPrefs {
-  expanded: boolean;
-  bottom: number; // px from the viewport bottom
+  expanded: boolean; // floating fallback: pill vs panel
+  bottom: number; // floating fallback: px from the viewport bottom
+  panelCollapsed: boolean; // sidebar panel: header only
 }
 const DEFAULT_BOTTOM = 88;
+
+/** Preview/test hook (ISOLATED world, so the page cannot set it): overrides location.pathname for mode detection. */
+const currentPath = (): string => (window as unknown as { __claudeUsagePath?: string }).__claudeUsagePath ?? location.pathname;
 
 let alreadyRunning = false;
 
@@ -125,7 +138,12 @@ class Widget {
   private root: ShadowRoot;
   private wrap: HTMLElement;
   private state: WidgetState | null = null;
-  private prefs: UiPrefs = { expanded: false, bottom: DEFAULT_BOTTOM };
+  private prefs: UiPrefs = { expanded: false, bottom: DEFAULT_BOTTOM, panelCollapsed: false };
+  private placement: Placement = "floating";
+  private mode: Mode = "chat";
+  private stopWatch: (() => void) | undefined;
+  private countdown: ReturnType<typeof setInterval> | undefined;
+  private lastSearch = 0;
   private tab: TabId = "session";
   private collapsedCards = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -135,15 +153,16 @@ class Widget {
 
   constructor() {
     this.host = document.createElement("claude-usage-widget");
-    this.host.style.cssText = "all:initial;position:fixed;right:16px;z-index:2147483000;";
+    this.host.setAttribute(HOST_ATTR, "");
     this.root = this.host.attachShadow({ mode: "closed" });
     const sheet = new CSSStyleSheet();
-    sheet.replaceSync(WIDGET_CSS);
+    sheet.replaceSync(WIDGET_CSS + SIDEBAR_CSS);
     this.root.adoptedStyleSheets = [sheet];
     this.wrap = h("div", { class: "wrap" });
     this.root.append(this.wrap);
-    this.applyPosition();
+    this.applyHostStyle();
     document.addEventListener("keydown", this.onKey, true);
+    document.addEventListener("visibilitychange", this.onVisibility);
     chrome.runtime.onMessage.addListener(this.onMessage);
     chrome.storage.onChanged.addListener(this.onStorage);
   }
@@ -154,6 +173,7 @@ class Widget {
       if (saved && typeof saved === "object") {
         if (typeof saved.expanded === "boolean") this.prefs.expanded = saved.expanded;
         if (typeof saved.bottom === "number" && Number.isFinite(saved.bottom)) this.prefs.bottom = saved.bottom;
+        if (typeof saved.panelCollapsed === "boolean") this.prefs.panelCollapsed = saved.panelCollapsed;
       }
     } catch (e) {
       warn("could not read widget prefs", e);
@@ -161,7 +181,7 @@ class Widget {
     await this.refresh();
     this.schedule();
     this.tick = setInterval(() => {
-      if (this.mounted && this.prefs.expanded && !document.hidden) this.render(); // keeps "resets in" / "ago" fresh
+      if (this.mounted && this.placement === "floating" && this.prefs.expanded && !document.hidden) this.render(); // keeps "resets in" / "ago" fresh
     }, 15_000);
   }
 
@@ -170,9 +190,97 @@ class Widget {
   private setMounted(on: boolean): void {
     if (on === this.mounted) return;
     this.mounted = on;
-    if (on) (document.body ?? document.documentElement).append(this.host);
-    else this.host.remove();
+    if (on) {
+      this.lastSearch = 0;
+      this.place();
+      this.stopWatch = watchPlacement(() => this.place());
+    } else {
+      this.stopWatch?.();
+      this.stopWatch = undefined;
+      this.host.remove();
+      this.syncCountdown();
+    }
   }
+
+  /** (Re)attaches the host: below the Customize/More sidebar row when possible, else floating. Idempotent. */
+  private place(): void {
+    if (!this.mounted || dead) return;
+    const path = currentPath();
+    const now = Date.now();
+    if (this.placement === "floating" && this.host.isConnected && this.mode === detectMode(path) && now - this.lastSearch < 1500) return;
+    this.lastSearch = now;
+    const before = { p: this.placement, m: this.mode };
+    const r = placeHost(this.host, document, path);
+    this.placement = r.placement;
+    this.mode = r.mode;
+    if (r.changed || before.p !== r.placement || before.m !== r.mode) {
+      this.applyHostStyle(r.row);
+      this.render();
+      this.syncCountdown();
+    }
+  }
+
+  private applyHostStyle(row: Element | null = null): void {
+    if (this.placement === "floating") {
+      this.host.style.cssText = "all:initial;position:fixed;right:16px;z-index:2147483000;";
+      this.host.removeAttribute("data-theme");
+      this.applyPosition();
+      return;
+    }
+    // Align the card with the sidebar rows' highlight box: inset of the row's inner link inside its wrapper.
+    let left = 0;
+    let right = 0;
+    let theme: "dark" | "light" | null = null;
+    try {
+      if (row) {
+        const inner = row.matches("a, button") ? row : (row.querySelector("a, button") ?? row);
+        const rr = row.getBoundingClientRect();
+        const ir = inner.getBoundingClientRect();
+        if (ir.width > 0 && rr.width > 0) {
+          left = Math.max(0, Math.min(40, ir.left - rr.left));
+          right = Math.max(0, Math.min(40, rr.right - ir.right));
+        }
+        theme = themeFromColor(getComputedStyle(inner).color);
+      }
+    } catch {
+      /* defaults */
+    }
+    this.host.style.cssText = `all:initial;display:block;box-sizing:border-box;font:inherit;color:inherit;padding:0 ${right}px 0 ${left}px;`;
+    if (theme) this.host.setAttribute("data-theme", theme);
+  }
+
+  // -- live countdown: one 1 s interval, only while the sidebar panel is attached and the tab is visible --
+
+  private syncCountdown(): void {
+    const want = this.mounted && this.placement === "sidebar" && !document.hidden && !dead;
+    if (want && !this.countdown) this.countdown = setInterval(() => this.tickCountdowns(), 1000);
+    else if (!want && this.countdown) {
+      clearInterval(this.countdown);
+      this.countdown = undefined;
+    }
+  }
+
+  private tickCountdowns(): void {
+    try {
+      if (dead) return this.destroy();
+      for (const el of Array.from(this.root.querySelectorAll(".cd[data-reset]"))) {
+        const ms = Date.parse(el.getAttribute("data-reset") ?? "") - Date.now();
+        const txt = formatCountdown(ms);
+        if (el.textContent !== txt) el.textContent = txt;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private onVisibility = (): void => {
+    this.syncCountdown();
+    if (!document.hidden) {
+      this.lastSearch = 0;
+      this.place();
+      void this.refresh();
+    }
+  };
 
   private schedule(): void {
     clearTimeout(this.timer);
@@ -180,13 +288,18 @@ class Widget {
       if (dead) return this.destroy();
       if (!document.hidden) await this.refresh();
       this.schedule();
-    }, this.prefs.expanded ? REFRESH_OPEN_MS : REFRESH_CLOSED_MS);
+    }, this.prefs.expanded || this.placement === "sidebar" ? REFRESH_OPEN_MS : REFRESH_CLOSED_MS);
   }
 
   private destroy(): void {
     clearTimeout(this.timer);
     clearInterval(this.tick);
     document.removeEventListener("keydown", this.onKey, true);
+    document.removeEventListener("visibilitychange", this.onVisibility);
+    clearInterval(this.countdown);
+    this.countdown = undefined;
+    this.stopWatch?.();
+    this.stopWatch = undefined;
     try {
       chrome.runtime.onMessage.removeListener(this.onMessage);
       chrome.storage.onChanged.removeListener(this.onStorage);
@@ -204,7 +317,10 @@ class Widget {
       if (s) this.state = s;
       else if (dead) return this.destroy();
       this.setMounted(!!this.state?.showWidget);
-      if (this.mounted) this.render();
+      if (this.mounted) {
+        this.place();
+        this.render();
+      }
     } catch (e) {
       warn("refresh failed", e);
     } finally {
@@ -236,7 +352,7 @@ class Widget {
   };
 
   private onKey = (e: KeyboardEvent): void => {
-    if (e.key === "Escape" && this.prefs.expanded && this.mounted) this.setExpanded(false);
+    if (e.key === "Escape" && this.placement === "floating" && this.prefs.expanded && this.mounted) this.setExpanded(false);
   };
 
   // -- prefs --
@@ -320,6 +436,12 @@ class Widget {
       const s = this.state;
       if (!s) return;
       const focusKey = (this.root.activeElement as HTMLElement | null)?.dataset?.fk ?? null;
+      this.wrap.className = `wrap ${this.placement}`;
+      if (this.placement === "sidebar") {
+        this.wrap.replaceChildren(this.renderSidebar(s));
+        if (focusKey) (this.root.querySelector(`[data-fk="${focusKey}"]`) as HTMLElement | null)?.focus();
+        return;
+      }
       const scroll = this.root.querySelector(".body")?.scrollTop ?? 0;
       this.applyPosition();
       this.wrap.replaceChildren(this.prefs.expanded ? this.renderPanel(s) : this.renderPill(s));
@@ -330,6 +452,166 @@ class Widget {
       warn("render failed", e);
     }
   }
+
+  // -- sidebar panel --
+
+  private renderSidebar(s: WidgetState): HTMLElement {
+    const open = !this.prefs.panelCollapsed;
+    const box = h("section", { class: `sb${open ? " open" : ""}`, "aria-label": "Claude usage" });
+    const chev = icon(CHEVRON, 12);
+    chev.classList.add("chev");
+    const toggle = h("button", { class: "sb-toggle", type: "button", "aria-expanded": String(open), "data-fk": "sb-toggle", title: open ? "Collapse" : "Expand" }, chev, "Usage");
+    toggle.addEventListener("click", () => {
+      this.prefs.panelCollapsed = !this.prefs.panelCollapsed;
+      this.savePrefs();
+      this.render();
+    });
+    const head = h("div", { class: "sb-head" }, toggle);
+    if (!open) {
+      const five = s.accountUsage?.windows.find((w) => w.name === "five_hour");
+      if (five) {
+        const peek = h("span", { class: "sb-peek" }, formatPct(five.utilization));
+        const ms = msUntil(five.resetsAt, Date.now());
+        if (ms !== null) peek.append(" · ", h("span", { class: "cd", "data-reset": five.resetsAt! }, formatCountdown(ms)));
+        head.append(peek);
+      }
+    }
+    const gear = h("button", { class: "icon-btn", type: "button", "aria-label": "Open settings", title: "Settings", "data-fk": "sb-gear" }, icon(GEAR, 13));
+    gear.addEventListener("click", () => void request("open-options"));
+    head.append(gear);
+    box.append(head);
+    if (open) box.append(h("div", { class: "sb-body" }, this.sbPlan(s), this.sbTabs(), this.sbDevices(s)));
+    return box;
+  }
+
+  private sbResets(iso: string | undefined): HTMLElement | null {
+    const ms = msUntil(iso, Date.now());
+    if (ms === null) return null;
+    return h("div", { class: "sb-reset" }, "resets in ", h("span", { class: "cd", "data-reset": iso! }, formatCountdown(ms)));
+  }
+
+  private sbPlan(s: WidgetState): HTMLElement {
+    const sec = h("div", { class: "sb-plan" });
+    const ws = sortWindows(s.accountUsage?.windows ?? []);
+    if (!ws.length) {
+      sec.append(h("div", { class: "sb-none" }, "Plan usage unavailable"));
+      return sec;
+    }
+    let primary = ws.filter((w) => w.name === "five_hour" || w.name === "seven_day");
+    if (!primary.length) primary = ws.slice(0, 1);
+    const rest = ws.filter((w) => !primary.includes(w));
+    const bar = (pct: number, name: string) => {
+      const b = h("div", { class: "sb-bar", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(pct)), "aria-label": name });
+      b.append(h("div", { class: `sb-fill t-${tone(pct)}`, style: `width:${pct}%` }));
+      return b;
+    };
+    for (const w of primary) {
+      const pct = clampPct(w.utilization);
+      const name = humanizeWindow(w.name);
+      sec.append(
+        h("div", { class: "sb-win" },
+          h("div", { class: "sb-win-top" }, h("span", { class: "sb-win-name" }, name), h("span", { class: "sb-win-pct" }, formatPct(pct))),
+          bar(pct, name),
+          this.sbResets(w.resetsAt),
+        ),
+      );
+    }
+    if (rest.length) {
+      const c = h("div", { class: "sb-compact" });
+      for (const w of rest) {
+        const pct = clampPct(w.utilization);
+        const name = humanizeWindow(w.name);
+        const ms = msUntil(w.resetsAt, Date.now());
+        c.append(
+          h("div", { class: "sb-crow" },
+            h("span", { class: "nm" }, name),
+            h("span", { class: "pc" }, formatPct(pct)),
+            ms === null ? h("span", { class: "rs" }) : h("span", { class: "rs" }, h("span", { class: "cd", "data-reset": w.resetsAt! }, formatCountdown(ms))),
+            bar(pct, name),
+          ),
+        );
+      }
+      sec.append(c);
+    }
+    return sec;
+  }
+
+  private sbTabs(): HTMLElement {
+    const list = h("div", { class: "sb-seg", role: "tablist", "aria-label": "Time window" });
+    TABS.forEach((t, i) => {
+      const sel = t.id === this.tab;
+      const b = h("button", { type: "button", role: "tab", id: `sb-tab-${t.id}`, "aria-selected": String(sel), tabindex: sel ? "0" : "-1", "data-fk": `sb-tab-${t.id}` }, t.label);
+      b.addEventListener("click", () => {
+        this.tab = t.id;
+        this.render();
+      });
+      b.addEventListener("keydown", (ev) => {
+        const d = ev.key === "ArrowRight" ? 1 : ev.key === "ArrowLeft" ? -1 : 0;
+        if (!d) return;
+        ev.preventDefault();
+        this.tab = TABS[(i + d + TABS.length) % TABS.length].id;
+        this.render();
+        (this.root.querySelector(`#sb-tab-${this.tab}`) as HTMLElement | null)?.focus();
+      });
+      list.append(b);
+    });
+    return list;
+  }
+
+  private sbOptionsLink(): HTMLElement {
+    const a = h("button", { class: "sb-link", type: "button", "data-fk": "sb-connect" }, "Open options");
+    a.addEventListener("click", () => void request("open-options"));
+    return a;
+  }
+
+  private sbDevices(s: WidgetState): HTMLElement {
+    const sec = h("div", { class: "sb-dev", role: "tabpanel" });
+    let agg: WindowAggregate;
+    let caption: string;
+    let estimated: boolean;
+    if (this.mode === "chat") {
+      agg = pickWindow(s.aggregates, this.tab);
+      caption = "This browser";
+      estimated = true;
+    } else {
+      if (!s.hub.configured) {
+        sec.append(h("div", { class: "sb-msg" }, "Connect your Usage Hub in options to see Claude Code usage ", this.sbOptionsLink()));
+        return sec;
+      }
+      if (!s.hub.ok) {
+        sec.append(h("div", { class: "sb-msg" }, `Hub unreachable: ${s.hub.error ?? "unknown error"}. `, this.sbOptionsLink()));
+        return sec;
+      }
+      const combined = combineDevices(s.hub.devices, s.codeDeviceIds ?? [], true);
+      if (!combined.devices.length) {
+        sec.append(h("div", { class: "sb-msg" }, "No Claude Code devices found on your hub."));
+        return sec;
+      }
+      agg = pickWindow(combined.windows, this.tab);
+      caption = combined.devices.length === 1 ? combined.devices[0].deviceName || "Claude Code" : `Claude Code · ${combined.devices.length} devices`;
+      estimated = !combined.exact;
+    }
+    sec.append(h("div", { class: "sb-cap" }, h("span", {}, caption), h("span", {}, estimated ? "≈ estimated" : "exact")));
+    const shares = modelShares(agg.byModel);
+    if (!shares.length) {
+      sec.append(h("div", { class: "sb-none" }, "No usage in this window"));
+      return sec;
+    }
+    const list = h("div", { class: `sb-list${shares.length > 8 ? " scroll" : ""}` });
+    for (const m of shares) {
+      list.append(
+        h("div", { class: "sb-m" },
+          h("span", { class: "nm", title: m.model }, m.model, h("small", {}, `${m.messages} ${m.messages === 1 ? "msg" : "msgs"}`)),
+          h("span", { class: "pc" }, `${m.pct}%`),
+          h("span", { class: "tk" }, `${estimated ? "≈" : ""}${formatTokens(m.tokens)} tok`),
+          h("div", { class: "sb-bar", "aria-hidden": "true" }, h("div", { class: "sb-fill", style: `width:${Math.max(2, m.pct)}%` })),
+        ),
+      );
+    }
+    sec.append(list);
+    return sec;
+  }
+
 
   private renderPill(s: WidgetState): HTMLElement {
     const five = s.accountUsage?.windows.find((w) => w.name === "five_hour");
@@ -371,7 +653,7 @@ class Widget {
     }
     for (const w of ws) {
       const pct = clampPct(w.utilization);
-      const reset = formatCountdown(w.resetsAt, now);
+      const reset = formatResetsIn(w.resetsAt, now);
       const bar = h("div", { class: "bar", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(pct)), "aria-label": humanizeWindow(w.name) });
       bar.append(h("div", { class: `fill t-${tone(pct)}`, style: `width:${pct}%` }));
       sec.append(

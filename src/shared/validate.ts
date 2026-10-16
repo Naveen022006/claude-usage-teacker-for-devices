@@ -61,6 +61,17 @@ export function validatePageMessage(x: unknown): PageMessage | null {
   }
 }
 
+/** Settings.codeDeviceIds: array of non-empty strings (<=128 chars), deduped, max 20. null if not an array. */
+export function sanitizeDeviceIds(x: unknown): string[] | null {
+  if (!Array.isArray(x)) return null;
+  const out: string[] = [];
+  for (const v of x) {
+    if (typeof v === "string" && v.length >= 1 && v.length <= 128 && !out.includes(v)) out.push(v);
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
 /** Validates the two widget request types (get-widget-state / open-options). They carry no data fields. */
 export function validateWidgetRequest(x: unknown): WidgetRequest | null {
   if (!isObj(x) || x.ns !== NS) return null;

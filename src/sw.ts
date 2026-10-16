@@ -14,7 +14,7 @@ import {
   type WidgetState,
 } from "./shared/messages";
 import { DEFAULT_SYNC_STATE, type Settings, type SyncState, type UsageEvent } from "./shared/types";
-import { validatePageMessage, validateWidgetRequest } from "./shared/validate";
+import { sanitizeDeviceIds, validatePageMessage, validateWidgetRequest } from "./shared/validate";
 import * as store from "./storage";
 import { fetchAccountUsage } from "./sync/accountUsage";
 import { buildReport, fetchHubState, normalizeBase, ping, sendReport } from "./sync/hub";
@@ -213,6 +213,7 @@ async function handleWidget(type: "get-widget-state" | "open-options"): Promise<
       accountUsage,
       syncState,
       showWidget: settings.showWidget,
+      codeDeviceIds: sanitizeDeviceIds(settings.codeDeviceIds) ?? [],
       hub: await getHubState(settings),
       now,
     };
@@ -315,6 +316,8 @@ async function handleUi(req: UiRequest): Promise<UiResponse> {
         if (typeof p.hubToken === "string") next.hubToken = p.hubToken.slice(0, 200);
         if (typeof p.pollAccountUsage === "boolean") next.pollAccountUsage = p.pollAccountUsage;
         if (typeof p.showWidget === "boolean") next.showWidget = p.showWidget;
+        const ids = sanitizeDeviceIds(p.codeDeviceIds);
+        if (ids) next.codeDeviceIds = ids;
         await store.set({ settings: next });
         if (typeof req.deviceName === "string") {
           const name = req.deviceName.trim().slice(0, 40);
@@ -323,6 +326,8 @@ async function handleUi(req: UiRequest): Promise<UiResponse> {
         if (next.syncEnabled) scheduleSync();
         return ok<"save-settings">(await buildState());
       }
+      case "get-hub-devices":
+        return ok<"get-hub-devices">(await getHubState(await store.get("settings")));
       case "test-connection": {
         const s = await store.get("settings");
         const pattern = hostPattern(s.hubUrl);

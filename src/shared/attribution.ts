@@ -8,7 +8,7 @@
 export const ATTR_WINDOWS = ["five_hour", "seven_day"] as const;
 export type AttrWindow = (typeof ATTR_WINDOWS)[number];
 
-export type ContributionSource = "chrome" | "hub";
+export type ContributionSource = "chrome" | "hub" | "local";
 
 export interface Contribution {
   model: string;

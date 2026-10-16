@@ -1,0 +1,17 @@
+{
+  "name": "usage-meter-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claude usage meter in an Edge app window (companion to the Usage Meter extension)",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "npm run build && node dist/server.cjs",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}

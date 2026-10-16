@@ -26,7 +26,7 @@ window.fetch = async (...args) => {
       parseStream(forUs, requestMeta(args)); // async, never awaited by the page
       return new Response(forPage, res);      // keep status/headers
     }
-  } catch (e) { console.warn("[deskbuddy]", e); }
+  } catch (e) { console.warn("[claude-usage]", e); }
   return res;
 };
 ```

@@ -26,6 +26,9 @@ function parseUrl(raw: string): URL | null {
   }
 }
 
+const HTTP_WARN = "http:// is only for local testing; use https:// for a deployed hub.";
+const BAD_URL = "Hub URL must start with https:// (or http:// for local testing).";
+
 /**
  * Must be called synchronously from a click handler, before any other await,
  * so the user gesture is still valid. Resolves true if granted (or already held).
@@ -36,8 +39,8 @@ function requestHostPermission(u: URL): Promise<boolean> {
 }
 
 function fill(s: Settings): void {
-  urlEl.value = s.deskbuddyUrl;
-  tokenEl.value = s.sharedToken;
+  urlEl.value = s.hubUrl;
+  tokenEl.value = s.hubToken;
   syncEl.checked = s.syncEnabled;
   cptEl.value = String(s.charsPerToken);
   cptOut.textContent = Number(s.charsPerToken).toFixed(1);
@@ -58,8 +61,8 @@ cptEl.addEventListener("input", () => {
 
 function currentSettings(): Partial<Settings> {
   return {
-    deskbuddyUrl: urlEl.value.trim().replace(/\/+$/, ""),
-    sharedToken: tokenEl.value,
+    hubUrl: urlEl.value.trim().replace(/\/+$/, ""),
+    hubToken: tokenEl.value,
     syncEnabled: syncEl.checked,
     charsPerToken: Number(cptEl.value),
     pollAccountUsage: pollEl.checked,
@@ -73,14 +76,14 @@ $("form").addEventListener("submit", (ev) => {
 
 function onSave(): Promise<void> {
   const settings = currentSettings();
-  const needsPerm = !!settings.syncEnabled && !!settings.deskbuddyUrl;
+  const needsPerm = !!settings.syncEnabled && !!settings.hubUrl;
   const u = parseUrl(urlEl.value);
   if (needsPerm && !u) {
-    setStatus("URL must start with http:// or https://", "bad");
+    setStatus(BAD_URL, "bad");
     return Promise.resolve();
   }
   if (!needsPerm && urlEl.value.trim() && !u) {
-    setStatus("URL must start with http:// or https://", "bad");
+    setStatus(BAD_URL, "bad");
     return Promise.resolve();
   }
   // Call permissions.request first (synchronously) to keep the user gesture.
@@ -92,13 +95,14 @@ function onSave(): Promise<void> {
     fill(res.data.settings);
     deviceName.value = res.data.device.deviceName;
     if (!granted) setStatus("Saved, but permission to reach that host was denied. Sync will fail until you allow it.", "warn");
+    else if (u?.protocol === "http:") setStatus("Saved. " + HTTP_WARN, "warn");
     else setStatus("Saved.", "ok");
   })();
 }
 
 $("test").addEventListener("click", () => {
   const u = parseUrl(urlEl.value);
-  if (!u) return setStatus("URL must start with http:// or https://", "bad");
+  if (!u) return setStatus(BAD_URL, "bad");
   const permP = requestHostPermission(u); // first, for the user gesture
   void (async () => {
     const granted = await permP;
@@ -109,7 +113,9 @@ $("test").addEventListener("click", () => {
     setStatus("Testing…");
     const res = await callSw({ type: "test-connection" });
     if (!res.ok) return setStatus("Test failed: " + res.error, "bad");
-    setStatus(res.data.reachable ? "Connected: " + res.data.detail : "Not reachable: " + res.data.detail, res.data.reachable ? "ok" : "bad");
+    const warn = u.protocol === "http:" ? " " + HTTP_WARN : "";
+    if (res.data.reachable) setStatus("Connected: " + res.data.detail + warn, u.protocol === "http:" ? "warn" : "ok");
+    else setStatus("Not reachable: " + res.data.detail, "bad");
   })();
 });
 
@@ -122,7 +128,7 @@ $("export").addEventListener("click", async () => {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   a.href = href;
-  a.download = `deskbuddy-usage-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.json`;
+  a.download = `claude-usage-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.json`;
   document.body.append(a);
   a.click();
   a.remove();

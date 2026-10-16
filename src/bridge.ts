@@ -6,7 +6,7 @@ window.addEventListener("message", (event: MessageEvent) => {
   try {
     if (event.source !== window || event.origin !== location.origin) return;
     const d = event.data as { ns?: unknown; type?: unknown } | null;
-    if (!d || typeof d !== "object" || d.ns !== "deskbuddy" || typeof d.type !== "string" || !TYPES.has(d.type)) return;
+    if (!d || typeof d !== "object" || d.ns !== "claude-usage" || typeof d.type !== "string" || !TYPES.has(d.type)) return;
     chrome.runtime.sendMessage(d).catch(() => {});
   } catch {
     /* extension context invalidated etc. */

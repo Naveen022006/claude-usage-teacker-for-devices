@@ -6,7 +6,7 @@ import { createClaudeStreamParser, isCompletionUrl, parseRequestMeta } from "./c
 import type { RequestMeta } from "./claudeParser";
 import { SseParser } from "./sse";
 
-const FLAG = Symbol.for("deskbuddy.fetch-hooked");
+const FLAG = Symbol.for("claude-usage.fetch-hooked");
 const seenOrgs = new Set<string>();
 
 function post(msg: PageMessage): void {
@@ -89,11 +89,11 @@ function install(): void {
         const [forPage, forUs] = res.body.tee();
         // Build the page's Response before starting our parse; once tee()'d, `res` can't be returned.
         const forPageRes = new Response(forPage, { status: res.status, statusText: res.statusText, headers: res.headers });
-        parseStream(forUs, metaP).catch((e) => console.warn("[deskbuddy]", e));
+        parseStream(forUs, metaP).catch((e) => console.warn("[claude-usage]", e));
         return forPageRes;
       }
     } catch (e) {
-      console.warn("[deskbuddy]", e);
+      console.warn("[claude-usage]", e);
     }
     return res;
   };
@@ -102,5 +102,5 @@ function install(): void {
 try {
   install();
 } catch (e) {
-  console.warn("[deskbuddy]", e);
+  console.warn("[claude-usage]", e);
 }

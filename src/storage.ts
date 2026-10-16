@@ -10,10 +10,24 @@ const DEFAULTS: { [K in Defaulted]: StorageShape[K] } = {
   syncState: DEFAULT_SYNC_STATE,
 };
 
+/** Pre-pivot settings used deskbuddyUrl / sharedToken. Rename once, drop the old LAN default. */
+async function migrateSettings(raw: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (!("deskbuddyUrl" in raw) && !("sharedToken" in raw)) return raw;
+  const { deskbuddyUrl, sharedToken, ...rest } = raw;
+  const next: Record<string, unknown> = { ...rest };
+  if (next.hubUrl === undefined && typeof deskbuddyUrl === "string") {
+    next.hubUrl = deskbuddyUrl === "http://deskbuddy.local" ? "" : deskbuddyUrl;
+  }
+  if (next.hubToken === undefined && typeof sharedToken === "string") next.hubToken = sharedToken;
+  await chrome.storage.local.set({ settings: next });
+  return next;
+}
+
 export async function get(key: "device"): Promise<DeviceInfo | undefined>;
 export async function get<K extends Defaulted>(key: K): Promise<StorageShape[K]>;
 export async function get(key: keyof StorageShape): Promise<unknown> {
-  const v = (await chrome.storage.local.get(key))[key];
+  let v = (await chrome.storage.local.get(key))[key];
+  if (key === "settings" && v && typeof v === "object") v = await migrateSettings(v as Record<string, unknown>);
   if (key === "device") return v ?? undefined;
   if (v === undefined || v === null) return DEFAULTS[key];
   // merge so newly added fields get defaults

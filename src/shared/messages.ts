@@ -14,7 +14,7 @@ import type {
   SyncState,
 } from "./types";
 
-export const NS = "deskbuddy" as const;
+export const NS = "claude-usage" as const;
 
 /** Messages originating in the page (MAIN world). Every field is re-validated by the SW. */
 export type PageMessage =

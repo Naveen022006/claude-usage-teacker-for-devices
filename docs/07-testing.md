@@ -15,7 +15,7 @@ Record: normal reply, extended thinking, retry, aborted (stop button), error.
 1. Load `dist/` unpacked. Send 3 messages with 2 different models → popup shows 3 msgs, right models.
 2. Press Stop mid-reply → event `aborted`.
 3. Reload tab mid-stream → no page errors in console.
-4. ESP32 off → sync dot red; turn on → green within 60 s.
+4. Hub (or mock) stopped -> sync dot red; started again -> green within 60 s.
 
 ## Calibrating chars-per-token
 Use the API's token counting endpoint (or the Claude Code transcripts in phase 2, which have

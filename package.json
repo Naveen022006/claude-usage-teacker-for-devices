@@ -1,17 +1,17 @@
 {
-  "name": "deskbuddy-usage-tracker",
+  "name": "claude-usage-tracker",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "bin": {
-    "deskbuddy-cc": "daemon/dist/deskbuddy-cc.mjs"
+    "claude-usage-daemon": "daemon/dist/claude-usage-daemon.mjs"
   },
   "scripts": {
     "build": "node scripts/build.mjs && node daemon/build.mjs",
     "watch": "node scripts/build.mjs --watch",
     "build:daemon": "node daemon/build.mjs",
-    "daemon": "node daemon/dist/deskbuddy-cc.mjs",
-    "mock": "node tools/mock-deskbuddy.mjs",
+    "daemon": "node daemon/dist/claude-usage-daemon.mjs",
+    "mock": "node tools/mock-hub.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

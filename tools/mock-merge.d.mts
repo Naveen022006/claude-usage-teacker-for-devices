@@ -1,5 +1,3 @@
-export const MAX_DEVICES: number;
-export const MAX_MODELS: number;
 export const FRESH_MS: number;
 export const MAX_BODY: number;
 export const WINDOWS: string[];

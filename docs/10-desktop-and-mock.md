@@ -1,4 +1,4 @@
-# 10 — Claude Desktop split (phase 3) and the mock DeskBuddy
+# 10 — Claude Desktop split (phase 3) and the mock hub
 
 ## Phase 3 approach
 The Claude Desktop app's **Code sessions** write the same transcripts as the terminal CLI, into the
@@ -32,22 +32,22 @@ Older daemon state tagged everything `claude-code`. `DaemonState.rev` (new, opti
 tagging revision (`STATE_REV = 2`). A state file without `rev >= 2` is reset on load (cursors and
 events dropped, `lastSync` kept) so transcripts are re-read and re-tagged once (7-day backfill).
 
-## Mock DeskBuddy server
-`tools/mock-deskbuddy.mjs` (zero dependencies) implements `firmware/SPEC.md` "HTTP API" and
-"Merge rules" so you can test without hardware. The pure merge logic is in `tools/mock-merge.mjs`
+## Mock hub
+`tools/mock-hub.mjs` (zero dependencies) implements the hub API and merge rules from docs/04 so you can
+develop clients without deploying. The pure merge logic is in `tools/mock-merge.mjs`
 (tested by `test/mockMerge.test.ts`).
 
 ```
 npm run mock                         # http://127.0.0.1:8787
-PORT=9000 DESKBUDDY_TOKEN=secret npm run mock
+PORT=9000 HUB_TOKEN=secret npm run mock
 ```
-- `POST /api/report` (401 bad token, 413 > 4096 B, 400 bad JSON / `v != 1` / no `deviceId`),
-  `GET /api/ping`, `GET /api/state` (merged JSON), `GET /` (auto-refreshing status table).
+- `POST /api/report` (401 bad/missing bearer token, 413 > 64 KB, 400 bad JSON / `v != 1` / no `deviceId`),
+  `GET /api/ping`, `GET /api/state` (merged JSON, same auth), `GET /` (auto-refreshing status table, no auth - dev only).
+- Merge: latest `sentAt` per device, fresh = received < 10 min, newest account snapshot wins.
 - Each accepted report prints a compact merged table to the console.
 
 ### Pointing clients at it
-- **Daemon:** `DESKBUDDY_URL=http://127.0.0.1:8787 npm run daemon -- once`
-  (add `DESKBUDDY_TOKEN=secret` if the mock has a token). Set `DESKBUDDY_HOME=<dir>` to keep config and
-  state out of `~/.deskbuddy` while experimenting.
-- **Extension:** options page -> DeskBuddy URL `http://127.0.0.1:8787` (grant the host permission when
-  prompted), token if set, enable sync.
+- **Daemon:** `CLAUDE_USAGE_HUB_URL=http://127.0.0.1:8787 CLAUDE_USAGE_HUB_TOKEN=secret npm run daemon -- once`.
+  Set `CLAUDE_USAGE_HUB_HOME=<dir>` to keep config and state out of your real home dir while experimenting.
+- **Extension:** options page -> Hub URL `http://127.0.0.1:8787` (grant the host permission when
+  prompted; http is for local testing only), Hub token if set, enable sync.

@@ -1,10 +1,10 @@
 # 08 — Roadmap
 
-| Phase | Client | How usage is measured | Accuracy |
-|---|---|---|---|
-| 1 | Chrome extension (this) | Observe claude.ai streams | Estimated |
-| 2 | Claude Code terminal | Node daemon `daemon/` tails local transcripts (exact `usage`) and posts `source:"claude-code"`, `estimated:false` reports. See docs/09-claude-code-daemon.md. | Exact |
-| 3 | Claude Desktop app (Code sessions) | Same daemon; transcript `entrypoint:"claude-desktop"` -> separate `source:"desktop"` device. Desktop chat tab writes nothing locally (account ring only). See docs/10. | Exact (Code sessions) |
-| 4 | DeskBuddy firmware | Merge reports per device, round UI on 1.43" AMOLED: ring = 5h account %, centre = today's tokens, swipe for per-device / per-model. | — |
+| Phase | Component | How usage is measured | Accuracy | Status |
+|---|---|---|---|---|
+| 1 | Chrome extension (`src/`) | Observe claude.ai streams | Estimated | ✅ |
+| 2 | Claude Code daemon (`daemon/`) | Tails local transcripts (exact `usage`), posts `source:"claude-code"`, `estimated:false`. See docs/09. | Exact | ✅ |
+| 3 | Claude Desktop (Code sessions) | Same daemon; transcript `entrypoint:"claude-desktop"` -> separate `source:"desktop"` device. Desktop chat writes nothing locally (account limits only). See docs/10. | Exact (Code sessions) | ✅ |
+| 4 | Usage Hub (`hub/`, Next.js on Vercel) | Receives all reports, merges per device x model, shows tokens and plan limits behind a token login. | — | ⏳ |
 
 The `/api/report` contract (04) is shared by all phases — keep `v` versioned.

@@ -1,12 +1,11 @@
 #!/usr/bin/env node
-// Zero-dependency mock of the DeskBuddy device. Contract: firmware/SPEC.md "HTTP API" + "Merge rules".
-// Env: PORT (default 8787), DESKBUDDY_TOKEN (if set, required in X-DeskBuddy-Token).
+// Zero-dependency mock of the Usage Hub API. Contract: docs/04-device-sync.md.
+// Env: PORT (default 8787), HUB_TOKEN (if set, required as "Authorization: Bearer <token>").
 import { createServer } from "node:http";
 import { MAX_BODY, applyReport, mergedView, newState, validateReport } from "./mock-merge.mjs";
 
 const PORT = Number(process.env.PORT) || 8787;
-const TOKEN = process.env.DESKBUDDY_TOKEN || "";
-const FW = "mock-1";
+const TOKEN = process.env.HUB_TOKEN || "";
 const state = newState();
 const ENT = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ENT[c]);
@@ -17,7 +16,7 @@ function send(res, code, body, type = "application/json") {
   res.writeHead(code, { "Content-Type": type + "; charset=utf-8", "Cache-Control": "no-store" });
   res.end(text);
 }
-const authed = (req) => !TOKEN || req.headers["x-deskbuddy-token"] === TOKEN;
+const authed = (req) => !TOKEN || req.headers.authorization === `Bearer ${TOKEN}`;
 
 function printTable() {
   const v = mergedView(state);
@@ -43,9 +42,9 @@ function statusPage() {
     )
     .join("");
   const t = v.totals.today;
-  return `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="5"><title>DeskBuddy mock</title>
+  return `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="5"><title>Usage Hub mock</title>
 <style>body{font:14px system-ui;margin:2rem}td,th{padding:.25rem .75rem;text-align:left}</style>
-<h1>DeskBuddy mock (${esc(FW)})</h1>
+<h1>Usage Hub mock</h1>
 <table><tr><th>Device</th><th>Source</th><th>State</th><th>Today msgs</th><th>Prompt tok</th><th>Output tok</th></tr>${rows}
 <tr><th>Total (fresh)</th><th></th><th></th><th>${t.messages}</th><th>${esc(fmt(t.promptTokens))}</th><th>${esc(fmt(t.outputTokens))}</th></tr></table>`;
 }
@@ -55,9 +54,12 @@ const server = createServer((req, res) => {
   if (req.method === "GET" && path === "/") return send(res, 200, statusPage(), "text/html");
   if (path === "/api/ping" && req.method === "GET") {
     if (!authed(req)) return send(res, 401, { ok: false, error: "unauthorized" });
-    return send(res, 200, { ok: true, name: "DeskBuddy", fw: FW, devices: state.devices.size });
+    return send(res, 200, { ok: true, name: "Claude Usage Hub", v: 1 });
   }
-  if (path === "/api/state" && req.method === "GET") return send(res, 200, mergedView(state));
+  if (path === "/api/state" && req.method === "GET") {
+    if (!authed(req)) return send(res, 401, { ok: false, error: "unauthorized" });
+    return send(res, 200, mergedView(state));
+  }
   if (path === "/api/report" && req.method === "POST") {
     if (!authed(req)) {
       req.resume();
@@ -90,4 +92,4 @@ const server = createServer((req, res) => {
   send(res, 404, { ok: false, error: "not found" });
 });
 
-server.listen(PORT, () => console.log(`mock DeskBuddy on http://127.0.0.1:${PORT}  token ${TOKEN ? "required" : "off"}`));
+server.listen(PORT, () => console.log(`mock Usage Hub on http://127.0.0.1:${PORT}  token ${TOKEN ? "required" : "off"}`));

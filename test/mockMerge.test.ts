@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FRESH_MS, applyReport, mergedView, newState, validateReport } from "../tools/mock-merge.mjs";
+import { FRESH_MS, MAX_BODY, applyReport, mergedView, newState, validateReport } from "../tools/mock-merge.mjs";
 
 type M = Record<string, { messages: number; tokens: number }>;
 const win = (messages: number, byModel: M = {}) => ({ messages, promptTokens: messages * 10, outputTokens: messages * 5, byModel });
@@ -27,33 +27,35 @@ describe("merge", () => {
     expect(s.devices.size).toBe(1);
     expect(mergedView(s, 2000).totals.today.messages).toBe(7);
   });
-  it("evicts the oldest receivedAt beyond 8 devices", () => {
+  it("ignores a report older (by sentAt) than the stored one", () => {
     const s = newState();
-    for (let i = 0; i < 8; i++) applyReport(s, rep("d" + i), 1000 + i);
-    applyReport(s, rep("d0"), 5000); // refresh d0 -> d1 is now oldest
-    applyReport(s, rep("new"), 6000);
-    expect(s.devices.size).toBe(8);
-    expect(s.devices.has("d1")).toBe(false);
-    expect(s.devices.has("d0")).toBe(true);
-    expect(s.devices.has("new")).toBe(true);
+    applyReport(s, rep("a", 7, { sentAt: 2000 }), 3000);
+    applyReport(s, rep("a", 1, { sentAt: 1000 }), 3100);
+    expect(s.devices.get("a").windows.today.messages).toBe(7);
+    applyReport(s, rep("a", 9, { sentAt: 2000 }), 3200);
+    expect(s.devices.get("a").windows.today.messages).toBe(9);
   });
-  it("folds models beyond the top 6 into other", () => {
+  it("has no device or model cap", () => {
     const s = newState();
+    for (let i = 0; i < 20; i++) applyReport(s, rep("d" + i), 1000 + i);
+    expect(s.devices.size).toBe(20);
     const byModel: M = {};
-    for (let i = 1; i <= 8; i++) byModel["m" + i] = { messages: 1, tokens: i * 100 };
-    applyReport(s, rep("a", 1, { windows: { today: win(8, byModel), last5h: win(0), last7d: win(0) } }), 1);
-    const bm = s.devices.get("a").windows.today.byModel;
-    expect(Object.keys(bm).sort()).toEqual(["m3", "m4", "m5", "m6", "m7", "m8", "other"]);
-    expect(bm.other).toEqual({ messages: 2, tokens: 300 });
+    for (let i = 1; i <= 10; i++) byModel["m" + i] = { messages: 1, tokens: i };
+    applyReport(s, rep("a", 1, { sentAt: 5, windows: { today: win(10, byModel), last5h: win(0), last7d: win(0) } }), 1);
+    expect(Object.keys(s.devices.get("a").windows.today.byModel)).toHaveLength(10);
   });
-  it("truncates strings", () => {
+  it("uses a 64 KB body limit and 10 min freshness", () => {
+    expect(MAX_BODY).toBe(65536);
+    expect(FRESH_MS).toBe(600000);
+  });
+  it("truncates oversized strings", () => {
     const s = newState();
-    const byModel: M = { ["m".repeat(60)]: { messages: 1, tokens: 1 } };
-    applyReport(s, rep("x".repeat(100), 1, { deviceName: "n".repeat(50), windows: { today: win(1, byModel), last5h: win(0), last7d: win(0) } }), 1);
+    const byModel: M = { ["m".repeat(150)]: { messages: 1, tokens: 1 } };
+    applyReport(s, rep("x".repeat(200), 1, { deviceName: "n".repeat(150), windows: { today: win(1, byModel), last5h: win(0), last7d: win(0) } }), 1);
     const d = [...s.devices.values()][0];
-    expect(d.deviceId).toHaveLength(64);
-    expect(d.deviceName).toHaveLength(32);
-    expect(Object.keys(d.windows.today.byModel)[0]).toHaveLength(40);
+    expect(d.deviceId).toHaveLength(128);
+    expect(d.deviceName).toHaveLength(100);
+    expect(Object.keys(d.windows.today.byModel)[0]).toHaveLength(100);
   });
   it("sums only fresh devices but still lists stale ones", () => {
     const s = newState();

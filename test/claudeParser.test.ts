@@ -79,7 +79,7 @@ describe("claude stream parser", () => {
     expect(ev.outputChars).toBe(17);
     expect(ev.status).toBe("ok");
     expect(warn).toHaveBeenCalled();
-    expect(warn.mock.calls.every((c) => String(c[0]).startsWith("[deskbuddy]"))).toBe(true);
+    expect(warn.mock.calls.every((c) => String(c[0]).startsWith("[claude-usage]"))).toBe(true);
     warn.mockRestore();
   });
 

@@ -46,17 +46,17 @@ function fmtReset(iso?: string): string {
 function renderSync(s: UiState): void {
   const ss = s.syncState;
   let cls = "off";
-  let label = "sync off";
+  let label = "hub sync off";
   if (s.settings.syncEnabled) {
     if (ss.lastError) {
       cls = "bad";
-      label = "sync error: " + ss.lastError;
+      label = "hub sync error: " + ss.lastError;
     } else if (ss.lastOkAt !== null && Date.now() - ss.lastOkAt < 120_000) {
       cls = "ok";
-      label = "synced " + new Date(ss.lastOkAt).toLocaleTimeString();
+      label = "synced to hub " + new Date(ss.lastOkAt).toLocaleTimeString();
     } else {
       cls = "warn";
-      label = ss.lastOkAt ? "last synced " + new Date(ss.lastOkAt).toLocaleTimeString() : "not synced yet";
+      label = ss.lastOkAt ? "last synced to hub " + new Date(ss.lastOkAt).toLocaleTimeString() : "not synced to hub yet";
     }
   }
   const dot = $("dot");

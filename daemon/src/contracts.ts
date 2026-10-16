@@ -41,7 +41,7 @@ export interface ScanResult {
   filesRead: number;
 }
 
-/** Persisted daemon state (~/.deskbuddy/claude-code-state.json). */
+/** Persisted daemon state (~/.claude-usage-hub/claude-code-state.json). */
 export interface DaemonState {
   v: 1;
   /** Migration revision. 2 = events are tagged by client (source "desktop" vs "claude-code"). Missing/older -> reset cursors+events once (rebackfill). */
@@ -51,13 +51,13 @@ export interface DaemonState {
   lastSync: { okAt: number | null; attemptAt: number | null; error: string | null };
 }
 
-/** User config (~/.deskbuddy/claude-code.json). */
+/** User config (~/.claude-usage-hub/claude-code.json). */
 export interface DaemonConfig {
   deviceId: string;
   deviceName: string; // default `${hostname}-ClaudeCode`
   desktopDeviceName: string; // default `${hostname}-Desktop` (Claude Desktop Code sessions, deviceId `${deviceId}-desktop`)
-  deskbuddyUrl: string; // "" = sync disabled
-  sharedToken: string;
+  hubUrl: string; // "" = sync disabled
+  hubToken: string;
   projectsDir: string; // default $CLAUDE_CONFIG_DIR/projects or ~/.claude/projects
   scanIntervalSec: number; // default 10
   heartbeatSec: number; // default 60

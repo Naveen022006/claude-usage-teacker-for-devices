@@ -11,7 +11,7 @@ async function walk(dir: string, out: string[]): Promise<void> {
   try {
     entries = await readdir(dir, { withFileTypes: true });
   } catch (e: any) {
-    if (e?.code !== "ENOENT" && e?.code !== "ENOTDIR") console.warn(`[deskbuddy-cc] cannot read dir ${dir}: ${e?.code ?? e}`);
+    if (e?.code !== "ENOENT" && e?.code !== "ENOTDIR") console.warn(`[claude-usage-daemon] cannot read dir ${dir}: ${e?.code ?? e}`);
     return;
   }
   for (const ent of entries) {
@@ -86,7 +86,7 @@ export async function scan(opts: ScanOptions, chunkSize: number = DEFAULT_CHUNK)
       for (const e of events) if (e.ts >= opts.since) all.push(e);
       cursors[file] = { offset, size: st.size, mtimeMs: st.mtimeMs };
     } catch (e: any) {
-      console.warn(`[deskbuddy-cc] cannot scan ${file}: ${e?.code ?? e?.message ?? e}`);
+      console.warn(`[claude-usage-daemon] cannot scan ${file}: ${e?.code ?? e?.message ?? e}`);
       if (old) cursors[file] = old;
     }
   }

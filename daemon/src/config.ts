@@ -1,12 +1,20 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 import type { DaemonConfig } from "./contracts";
 
+/**
+ * Home dir: $CLAUDE_USAGE_HUB_HOME, else legacy $DESKBUDDY_HOME, else ~/.claude-usage-hub.
+ * An existing legacy ~/.deskbuddy is kept in use when the new dir does not exist yet.
+ */
 export function defaultDir(): string {
-  if (process.env.DESKBUDDY_HOME) return process.env.DESKBUDDY_HOME;
-  return join(homedir(), ".deskbuddy");
+  const env = process.env.CLAUDE_USAGE_HUB_HOME || process.env.DESKBUDDY_HOME;
+  if (env) return env;
+  const next = join(homedir(), ".claude-usage-hub");
+  const legacy = join(homedir(), ".deskbuddy");
+  return !existsSync(next) && existsSync(legacy) ? legacy : next;
 }
 export const configPath = (dir = defaultDir()) => join(dir, "claude-code.json");
 export const statePath = (dir = defaultDir()) => join(dir, "claude-code-state.json");
@@ -21,8 +29,8 @@ export function defaultConfig(): DaemonConfig {
     deviceId: randomUUID(),
     deviceName: `${hostname()}-ClaudeCode`,
     desktopDeviceName: `${hostname()}-Desktop`,
-    deskbuddyUrl: "",
-    sharedToken: "",
+    hubUrl: "",
+    hubToken: "",
     projectsDir: defaultProjectsDir(),
     scanIntervalSec: 10,
     heartbeatSec: 60,
@@ -30,16 +38,22 @@ export function defaultConfig(): DaemonConfig {
   };
 }
 
-const STRINGS = ["deviceId", "deviceName", "desktopDeviceName", "deskbuddyUrl", "sharedToken", "projectsDir"] as const;
+const STRINGS = ["deviceId", "deviceName", "desktopDeviceName", "hubUrl", "hubToken", "projectsDir"] as const;
+/** Pre-pivot config keys, read when the new key is absent. */
+const LEGACY_KEYS = { deskbuddyUrl: "hubUrl", sharedToken: "hubToken" } as const;
 const NUMBERS = ["scanIntervalSec", "heartbeatSec", "backfillDays"] as const;
 
 function merge(defaults: DaemonConfig, raw: unknown, warn: (m: string) => void): DaemonConfig {
   const out = { ...defaults } as Record<string, string | number>;
   if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-    const r = raw as Record<string, unknown>;
+    const r = { ...(raw as Record<string, unknown>) };
+    for (const [old, now] of Object.entries(LEGACY_KEYS)) {
+      if (old in r && !(now in r)) r[now] = old === "deskbuddyUrl" && r[old] === "http://deskbuddy.local" ? "" : r[old];
+      delete r[old];
+    }
     for (const k of STRINGS) {
       if (!(k in r)) continue;
-      if (typeof r[k] === "string" && (r[k] !== "" || k === "deskbuddyUrl" || k === "sharedToken")) out[k] = r[k] as string;
+      if (typeof r[k] === "string" && (r[k] !== "" || k === "hubUrl" || k === "hubToken")) out[k] = r[k] as string;
       else warn(`config: "${k}" must be a string; using default`);
     }
     for (const k of NUMBERS) {
@@ -66,9 +80,12 @@ export async function loadConfig(dir = defaultDir(), warn: (m: string) => void =
     else warn("config: unreadable file; using defaults");
   }
   const cfg = merge(defaultConfig(), raw, warn);
-  if (!existed) await writeFile(file, JSON.stringify(cfg, null, 2) + "\n");
-  if (process.env.DESKBUDDY_URL) cfg.deskbuddyUrl = process.env.DESKBUDDY_URL;
-  if (process.env.DESKBUDDY_TOKEN) cfg.sharedToken = process.env.DESKBUDDY_TOKEN;
+  const legacy = !!raw && typeof raw === "object" && Object.keys(LEGACY_KEYS).some((k) => k in (raw as object));
+  if (!existed || legacy) await writeFile(file, JSON.stringify(cfg, null, 2) + "\n"); // legacy keys are migrated once
+  const envUrl = process.env.CLAUDE_USAGE_HUB_URL || process.env.DESKBUDDY_URL;
+  const envToken = process.env.CLAUDE_USAGE_HUB_TOKEN || process.env.DESKBUDDY_TOKEN;
+  if (envUrl) cfg.hubUrl = envUrl;
+  if (envToken) cfg.hubToken = envToken;
   return cfg;
 }
 

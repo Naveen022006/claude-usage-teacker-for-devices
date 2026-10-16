@@ -1,24 +1,26 @@
 import { computeAggregates } from "../../src/shared/aggregate";
 import type { Aggregates, Report, Source, UsageEvent, WindowAggregate } from "../../src/shared/types";
-import { buildReport, normalizeBase, ping, sendReport } from "../../src/sync/deskbuddy";
+import { buildReport, normalizeBase, ping, sendReport } from "../../src/sync/hub";
 import { configPath, loadConfig, saveConfig, statePath } from "./config";
 import type { DaemonConfig, DaemonState } from "./contracts";
 import { scan } from "./scanner";
 import { loadState, saveState } from "./state";
 import { mergeEvents } from "./transcript";
 
-const HELP = `deskbuddy-cc - report Claude Code token usage to a DeskBuddy device
+const HELP = `claude-usage-daemon - report Claude Code token usage to your Usage Hub
 
-Usage: deskbuddy-cc [command] [options]
+Usage: claude-usage-daemon [command] [options]
   run                 Watch transcripts and sync continuously (default)
   once [--dry-run]    Scan once, print totals, sync (or print the report with --dry-run)
   status              Show config, last sync and totals
   config [--url U] [--name N] [--desktop-name N] [--token T] [--projects-dir D]
                       Save settings and print them
-  ping                Check the DeskBuddy device is reachable
+  ping                Check the hub is reachable (GET /api/ping)
   --help              This text
 
-Env: DESKBUDDY_URL, DESKBUDDY_TOKEN override the config file; DESKBUDDY_HOME moves the ~/.deskbuddy dir; CLAUDE_CONFIG_DIR sets the projects dir.`;
+Env: CLAUDE_USAGE_HUB_URL, CLAUDE_USAGE_HUB_TOKEN override the config file (legacy DESKBUDDY_URL / DESKBUDDY_TOKEN still work);
+CLAUDE_USAGE_HUB_HOME moves the ~/.claude-usage-hub dir (legacy DESKBUDDY_HOME, and an existing ~/.deskbuddy, are still honoured);
+CLAUDE_CONFIG_DIR sets the projects dir.`;
 
 const ts = () => new Date().toTimeString().slice(0, 8);
 const log = (m: string) => console.log(`[${ts()}] ${m}`);
@@ -99,12 +101,12 @@ async function scanInto(cfg: DaemonConfig, state: DaemonState, now = Date.now())
 }
 
 async function sync(cfg: DaemonConfig, state: DaemonState): Promise<boolean> {
-  if (!cfg.deskbuddyUrl) return false;
+  if (!cfg.hubUrl) return false;
   const now = Date.now();
   state.lastSync.attemptAt = now;
   let error: string | null = null;
   for (const report of buildReports(cfg, state.events, now)) {
-    const r = await sendReport(cfg.deskbuddyUrl, cfg.sharedToken, report);
+    const r = await sendReport(cfg.hubUrl, cfg.hubToken, report);
     if (!r.ok && error === null) error = `${report.source}: ${r.error ?? "unknown error"}`;
   }
   if (error === null) state.lastSync.okAt = Date.now();
@@ -117,7 +119,7 @@ async function cmdRun(): Promise<void> {
   const cfg = await loadConfig();
   const state = await loadState();
   log(`watching ${cfg.projectsDir} (every ${cfg.scanIntervalSec}s) as "${cfg.deviceName}" / "${cfg.desktopDeviceName}"`);
-  if (!cfg.deskbuddyUrl) log("no DeskBuddy URL set - scanning only (run: deskbuddy-cc config --url http://deskbuddy.local)");
+  if (!cfg.hubUrl) log("no hub URL set - scanning only (run: claude-usage-daemon config --url https://your-hub.vercel.app --token SECRET)");
 
   let stopping = false;
   let debounce: NodeJS.Timeout | undefined;
@@ -125,7 +127,7 @@ async function cmdRun(): Promise<void> {
   let lastHeartbeat = 0;
 
   const doSync = async (label: string): Promise<void> => {
-    if (!cfg.deskbuddyUrl || syncing) return;
+    if (!cfg.hubUrl || syncing) return;
     syncing = true;
     try {
       const ok = await sync(cfg, state);
@@ -155,14 +157,14 @@ async function cmdRun(): Promise<void> {
       const { added, tokens } = await scanInto(cfg, state);
       if (added > 0) {
         const label = `+${added} ${added === 1 ? "reply" : "replies"} (${fmt(tokens)} tok)`;
-        if (cfg.deskbuddyUrl) {
+        if (cfg.hubUrl) {
           log(label);
           if (debounce) clearTimeout(debounce);
           debounce = setTimeout(() => void doSync(label), 3000);
         } else {
           log(label);
         }
-      } else if (cfg.deskbuddyUrl && Date.now() - lastHeartbeat >= cfg.heartbeatSec * 1000) {
+      } else if (cfg.hubUrl && Date.now() - lastHeartbeat >= cfg.heartbeatSec * 1000) {
         await doSync("heartbeat");
       }
     } catch (e) {
@@ -183,8 +185,8 @@ async function cmdOnce(args: string[]): Promise<void> {
     for (const report of buildReports(cfg, state.events, Date.now())) console.log(JSON.stringify(report, null, 2));
     return;
   }
-  if (!cfg.deskbuddyUrl) {
-    console.log("No DeskBuddy URL set - not syncing.");
+  if (!cfg.hubUrl) {
+    console.log("No hub URL set - not syncing.");
     return;
   }
   const ok = await sync(cfg, state);
@@ -199,8 +201,8 @@ async function cmdStatus(): Promise<void> {
   console.log(`State:        ${statePath()}`);
   console.log(`Device:       ${cfg.deviceName} (${cfg.deviceId})`);
   console.log(`Desktop:      ${cfg.desktopDeviceName} (${cfg.deviceId}-desktop)`);
-  console.log(`DeskBuddy:    ${cfg.deskbuddyUrl ? normalizeBase(cfg.deskbuddyUrl) : "(not set)"}`);
-  console.log(`Token:        ${mask(cfg.sharedToken)}`);
+  console.log(`Hub:          ${cfg.hubUrl ? normalizeBase(cfg.hubUrl) : "(not set)"}`);
+  console.log(`Token:        ${mask(cfg.hubToken)}`);
   console.log(`Projects dir: ${cfg.projectsDir}`);
   console.log(`Intervals:    scan ${cfg.scanIntervalSec}s, heartbeat ${cfg.heartbeatSec}s, backfill ${cfg.backfillDays}d`);
   const l = state.lastSync;
@@ -216,21 +218,21 @@ async function cmdConfig(args: string[]): Promise<void> {
   const desktopName = flag(args, "--desktop-name");
   const token = flag(args, "--token");
   const dir = flag(args, "--projects-dir");
-  if (url !== undefined) partial.deskbuddyUrl = url;
+  if (url !== undefined) partial.hubUrl = url;
   if (name !== undefined) partial.deviceName = name;
   if (desktopName !== undefined) partial.desktopDeviceName = desktopName;
-  if (token !== undefined) partial.sharedToken = token;
+  if (token !== undefined) partial.hubToken = token;
   if (dir !== undefined) partial.projectsDir = dir;
   await loadConfig(); // ensure first-run defaults exist
   const cfg = await saveConfig(partial);
-  console.log(JSON.stringify({ ...cfg, sharedToken: mask(cfg.sharedToken) }, null, 2));
+  console.log(JSON.stringify({ ...cfg, hubToken: mask(cfg.hubToken) }, null, 2));
   console.log(`Saved to ${configPath()}`);
 }
 
 async function cmdPing(): Promise<void> {
   const cfg = await loadConfig();
-  const r = await ping(cfg.deskbuddyUrl, cfg.sharedToken);
-  if (r.ok) console.log(`OK: ${normalizeBase(cfg.deskbuddyUrl)} reachable`);
+  const r = await ping(cfg.hubUrl, cfg.hubToken);
+  if (r.ok) console.log(`OK: ${normalizeBase(cfg.hubUrl)} reachable`);
   else {
     console.error(`Ping failed: ${r.error}`);
     process.exitCode = 1;

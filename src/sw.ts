@@ -8,7 +8,7 @@ import { DEFAULT_SYNC_STATE, type Settings, type SyncState, type UsageEvent } fr
 import { validatePageMessage } from "./shared/validate";
 import * as store from "./storage";
 import { fetchAccountUsage } from "./sync/accountUsage";
-import { buildReport, normalizeBase, ping, sendReport } from "./sync/deskbuddy";
+import { buildReport, normalizeBase, ping, sendReport } from "./sync/hub";
 
 const HEARTBEAT = "heartbeat";
 const SYNC_DEBOUNCE_MS = 3000;
@@ -33,7 +33,7 @@ async function heartbeat(): Promise<void> {
   try {
     await pollAccountUsage();
   } catch (e) {
-    console.warn("[deskbuddy] usage poll failed", e);
+    console.warn("[claude-usage] usage poll failed", e);
   }
   await syncNow();
 }
@@ -60,7 +60,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
   if (sender.tab) {
     if (sender.url?.startsWith("https://claude.ai/")) {
       const m = validatePageMessage(msg);
-      if (m) void handlePage(m).catch((e) => console.warn("[deskbuddy] page message failed", e));
+      if (m) void handlePage(m).catch((e) => console.warn("[claude-usage] page message failed", e));
     }
     return false; // content scripts never get a response
   }
@@ -151,8 +151,8 @@ async function doSync(): Promise<SyncState> {
   if (!settings.syncEnabled) return store.get("syncState");
   const attemptAt = Date.now();
   try {
-    const pattern = hostPattern(settings.deskbuddyUrl);
-    if (!pattern) return await patchSync({ lastAttemptAt: attemptAt, lastError: "Invalid DeskBuddy URL" });
+    const pattern = hostPattern(settings.hubUrl);
+    if (!pattern) return await patchSync({ lastAttemptAt: attemptAt, lastError: "Invalid Hub URL" });
     if (!(await chrome.permissions.contains({ origins: [pattern] }))) {
       return await patchSync({ lastAttemptAt: attemptAt, lastError: `Host permission not granted for ${pattern}` });
     }
@@ -161,7 +161,7 @@ async function doSync(): Promise<SyncState> {
       store.get("events"),
       store.get("accountUsage"),
     ]);
-    const res = await sendReport(settings.deskbuddyUrl, settings.sharedToken, buildReport(device, events, account));
+    const res = await sendReport(settings.hubUrl, settings.hubToken, buildReport(device, events, account));
     return await patchSync(
       res.ok
         ? { lastAttemptAt: attemptAt, lastOkAt: Date.now(), lastError: null, queue: 0 }
@@ -205,10 +205,10 @@ async function handleUi(req: UiRequest): Promise<UiResponse> {
         const cur = await store.get("settings");
         const p = req.settings ?? {};
         const next: Settings = { ...cur };
-        if (typeof p.deskbuddyUrl === "string") next.deskbuddyUrl = p.deskbuddyUrl.trim().slice(0, 200);
+        if (typeof p.hubUrl === "string") next.hubUrl = p.hubUrl.trim().slice(0, 200);
         if (typeof p.syncEnabled === "boolean") next.syncEnabled = p.syncEnabled;
         if (p.charsPerToken !== undefined) next.charsPerToken = clampCharsPerToken(p.charsPerToken);
-        if (typeof p.sharedToken === "string") next.sharedToken = p.sharedToken.slice(0, 200);
+        if (typeof p.hubToken === "string") next.hubToken = p.hubToken.slice(0, 200);
         if (typeof p.pollAccountUsage === "boolean") next.pollAccountUsage = p.pollAccountUsage;
         await store.set({ settings: next });
         if (typeof req.deviceName === "string") {
@@ -220,12 +220,12 @@ async function handleUi(req: UiRequest): Promise<UiResponse> {
       }
       case "test-connection": {
         const s = await store.get("settings");
-        const pattern = hostPattern(s.deskbuddyUrl);
-        if (!pattern) return ok<"test-connection">({ reachable: false, detail: "Invalid DeskBuddy URL" });
+        const pattern = hostPattern(s.hubUrl);
+        if (!pattern) return ok<"test-connection">({ reachable: false, detail: "Invalid Hub URL" });
         if (!(await chrome.permissions.contains({ origins: [pattern] }))) {
           return ok<"test-connection">({ reachable: false, detail: `Host permission not granted for ${pattern}` });
         }
-        const r = await ping(s.deskbuddyUrl, s.sharedToken);
+        const r = await ping(s.hubUrl, s.hubToken);
         return ok<"test-connection">({ reachable: r.ok, detail: r.ok ? "OK" : (r.error ?? "Unreachable") });
       }
       case "sync-now": {
@@ -239,7 +239,7 @@ async function handleUi(req: UiRequest): Promise<UiResponse> {
           store.get("events"),
           store.get("accountUsage"),
         ]);
-        const { sharedToken: _omit, ...safeSettings } = settings;
+        const { hubToken: _omit, ...safeSettings } = settings;
         return ok<"export-data">({ json: JSON.stringify({ device, settings: safeSettings, events, accountUsage }, null, 2) });
       }
       case "clear-data": {

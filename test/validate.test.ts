@@ -5,7 +5,7 @@ const good = {
   id: "msg_1", ts: 1760000000000, model: "claude-sonnet-5-5",
   promptChars: 10, outputChars: 20, thinkingChars: 0, status: "ok", kind: "new",
 };
-const wrap = (type: string, payload: unknown) => ({ ns: "deskbuddy", type, payload });
+const wrap = (type: string, payload: unknown) => ({ ns: "claude-usage", type, payload });
 
 describe("validateCapturedEvent", () => {
   it("accepts a good event and strips extra keys", () => {

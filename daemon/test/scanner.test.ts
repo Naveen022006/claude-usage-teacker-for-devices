@@ -103,7 +103,7 @@ describe("scan", () => {
   });
 });
 
-describe.skipIf(process.env.DESKBUDDY_REAL !== "1")("real data smoke", () => {
+describe.skipIf(process.env.CLAUDE_USAGE_REAL !== "1")("real data smoke", () => {
   it("scans ~/.claude/projects", async () => {
     const r = await scan({ projectsDir: join(homedir(), ".claude", "projects"), cursors: {}, deviceId: "smoke", since: Date.now() - 86400_000 });
     const ids = new Set(r.events.map((e) => e.id));

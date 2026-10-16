@@ -1,16 +1,29 @@
-# 04 — DeskBuddy sync
+# 04 — Hub sync (contract)
 
-The ESP32 runs a small HTTP server on the LAN. The extension pushes; the ESP32 never pulls.
+All clients (Chrome extension, Claude Code daemon) push snapshots to the **Usage Hub**, a small
+web app the user deploys once to Vercel (`hub/`). The hub combines every device logged in to the
+same Claude account (Pro / Max) and shows **per device × per model** usage with tokens, plus the
+account's plan limits. One hub = one Claude account = one owner.
 
-## Endpoint
-`POST http://deskbuddy.local/api/report` (URL configurable; fall back to IP if mDNS fails)
+## Auth
+- One secret, `HUB_TOKEN` (env var on the hub, ≥ 24 chars). Clients send
+  `Authorization: Bearer <HUB_TOKEN>`. Wrong/missing → `401 {"ok":false,"error":"unauthorized"}`.
+- The dashboard uses the same secret once at `/login`, then an httpOnly signed session cookie.
 
+## Endpoints
+| Route | Behaviour |
+|---|---|
+| `GET /api/ping` | Auth required. `200 {"ok":true,"name":"Claude Usage Hub","v":1}` |
+| `POST /api/report` | Auth required. Body = `Report` (below), ≤ 64 KB (`413`), invalid → `400`. Upserts the device's latest snapshot and the account snapshot. `200 {"ok":true}` |
+| `GET /api/state` | Auth required (bearer or session). Merged view as JSON. |
+
+## Report (unchanged v1 shape — `src/shared/types.ts`)
 ```json
 {
   "v": 1,
   "deviceId": "8f1c…",
   "deviceName": "Laptop-Chrome",
-  "source": "chrome",
+  "source": "chrome",                 // "chrome" | "claude-code" | "desktop"
   "sentAt": 1760600000000,
   "windows": {
     "today":  { "messages": 12, "promptTokens": 3400, "outputTokens": 18000,
@@ -18,28 +31,25 @@ The ESP32 runs a small HTTP server on the LAN. The extension pushes; the ESP32 n
     "last5h": { "...": "same shape" },
     "last7d": { "...": "same shape" }
   },
-  "estimated": true,
+  "estimated": true,                  // true for chrome (char-based), false for transcript sources
   "account": { "fetchedAt": 1760599900000,
                "windows": [{ "name": "five_hour", "utilization": 42, "resetsAt": "…" }] }
 }
 ```
-Send **aggregates, not raw events** — the ESP32 has little RAM. It keeps the latest report
-per `deviceId` and sums across devices for display. `account` is shown once (newest wins).
+Clients send **aggregates, not raw events**, and never any message text.
 
-## When to send
-- After each new event (debounced 3 s)
-- Every 60 s heartbeat while browser is open (`chrome.alarms`)
-- Response `200 {"ok":true}` → update `syncState.lastOkAt`
+## Merge rules (hub and `tools/mock-hub.mjs`)
+- Latest snapshot per `deviceId` wins (by `sentAt`; ignore older).
+- **Fresh** = received < 10 min ago. Totals sum fresh devices only; stale devices are listed, dimmed,
+  with "last seen".
+- Per-model totals = sum of fresh devices' `byModel`.
+- `account`: the snapshot with the newest `fetchedAt` across all devices wins. It is account-wide
+  (includes untracked clients such as the mobile app or Desktop chat) — show it once, never sum it.
 
-## Failure handling
-Timeout 3 s. On failure, keep `syncState.lastError`, retry on next alarm. Nothing is lost
-because the next report is a full snapshot.
+## When clients send
+- After new usage (debounced 3 s) and every 60 s heartbeat.
+- Timeout 10 s. On failure keep `lastError`; the next snapshot replaces it (nothing is lost).
 
-## Security
-- Optional shared token: header `X-DeskBuddy-Token`, set in both options page and ESP32 config.
-- ESP32 should reject bodies > 4 KB.
-
-## Permissions note
-Pushing to `http://deskbuddy.local` from the service worker needs a matching
-`host_permissions` entry. Use `optional_host_permissions` and request it when the user
-saves the URL in options.
+## Chrome permission note
+The hub URL is user-configured, so the extension requests it at save time via
+`optional_host_permissions` (`https://*/*`, plus `http://*/*` for a local hub/mock).

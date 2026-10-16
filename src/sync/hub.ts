@@ -1,11 +1,12 @@
 import { computeAggregates } from "../shared/aggregate";
 import type { AccountUsage, DeviceInfo, Report, Source, UsageEvent } from "../shared/types";
 
-const TIMEOUT_MS = 3000;
+const TIMEOUT_MS = 10_000;
 
+/** Trims and strips trailing slashes. A bare host defaults to https://. */
 export function normalizeBase(url: string): string {
   let u = url.trim().replace(/\/+$/, "");
-  if (u && !/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) u = "http://" + u;
+  if (u && !/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) u = "https://" + u;
   return u;
 }
 
@@ -44,33 +45,44 @@ async function request(url: string, init: RequestInit): Promise<Response> {
 }
 
 function errMsg(e: unknown): string {
-  if (e instanceof Error && e.name === "AbortError") return "timed out after 3 s";
+  if (e instanceof Error && e.name === "AbortError") return "timed out after 10 s";
   return e instanceof Error ? e.message : String(e);
 }
 
+function authHeaders(token: string): Record<string, string> {
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function okBody(res: Response): Promise<boolean> {
+  const body = (await res.json().catch(() => null)) as { ok?: unknown } | null;
+  return body?.ok === true;
+}
+
+/** Success = HTTP 200 and {"ok":true}. */
 export async function sendReport(url: string, token: string, report: Report): Promise<SyncResult> {
   const base = normalizeBase(url);
-  if (!base) return { ok: false, error: "No DeskBuddy URL set" };
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (token) headers["X-DeskBuddy-Token"] = token;
+  if (!base) return { ok: false, error: "No hub URL set" };
   try {
-    const res = await request(`${base}/api/report`, { method: "POST", headers, body: JSON.stringify(report) });
-    if (res.status !== 200) return { ok: false, error: `HTTP ${res.status}` };
-    const body = (await res.json().catch(() => null)) as { ok?: unknown } | null;
-    return body?.ok === true ? { ok: true } : { ok: false, error: "Unexpected response from DeskBuddy" };
+    const res = await request(`${base}/api/report`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders(token) },
+      body: JSON.stringify(report),
+    });
+    if (res.status !== 200) return { ok: false, error: res.status === 401 ? "HTTP 401 (check hub token)" : `HTTP ${res.status}` };
+    return (await okBody(res)) ? { ok: true } : { ok: false, error: "Unexpected response from hub" };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
 }
 
+/** GET /api/ping -> 200 {"ok":true}. */
 export async function ping(url: string, token: string): Promise<SyncResult> {
   const base = normalizeBase(url);
-  if (!base) return { ok: false, error: "No DeskBuddy URL set" };
-  const headers: Record<string, string> = {};
-  if (token) headers["X-DeskBuddy-Token"] = token;
+  if (!base) return { ok: false, error: "No hub URL set" };
   try {
-    const res = await request(`${base}/api/ping`, { method: "GET", headers });
-    return res.ok ? { ok: true } : { ok: false, error: `HTTP ${res.status}` };
+    const res = await request(`${base}/api/ping`, { method: "GET", headers: authHeaders(token) });
+    if (res.status !== 200) return { ok: false, error: res.status === 401 ? "HTTP 401 (check hub token)" : `HTTP ${res.status}` };
+    return (await okBody(res)) ? { ok: true } : { ok: false, error: "Unexpected response from hub" };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }

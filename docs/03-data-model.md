@@ -34,8 +34,10 @@ interface AccountUsage {
 | `device` | `{ deviceId, deviceName }` |
 | `events` | ring buffer of last 30 days of `UsageEvent` (prune on write) |
 | `accountUsage` | `AccountUsage` |
-| `settings` | `{ deskbuddyUrl, syncEnabled, charsPerToken }` |
+| `settings` | `{ hubUrl, hubToken, syncEnabled, charsPerToken, pollAccountUsage }` |
 | `syncState` | `{ lastOkAt, lastError, queue: number }` |
+
+Older installs stored `deskbuddyUrl` / `sharedToken`; they are renamed to `hubUrl` / `hubToken` on first read.
 
 ## Aggregates (computed, not stored)
 For windows `today`, `last5h`, `last7d`:

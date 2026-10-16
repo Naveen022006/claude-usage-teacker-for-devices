@@ -26,14 +26,14 @@ export async function fetchAccountUsage(orgId: string): Promise<AccountUsage | n
   try {
     const res = await fetch(`https://claude.ai/api/organizations/${orgId}/usage`, { credentials: "include" });
     if (!res.ok) {
-      console.warn("[deskbuddy] usage endpoint HTTP", res.status);
+      console.warn("[claude-usage] usage endpoint HTTP", res.status);
       return null;
     }
     const parsed = parseAccountUsage(await res.json());
-    if (!parsed) console.warn("[deskbuddy] unknown usage response shape");
+    if (!parsed) console.warn("[claude-usage] unknown usage response shape");
     return parsed;
   } catch (e) {
-    console.warn("[deskbuddy] usage fetch failed", e);
+    console.warn("[claude-usage] usage fetch failed", e);
     return null;
   }
 }

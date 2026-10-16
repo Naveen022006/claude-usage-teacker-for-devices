@@ -11,7 +11,7 @@ src/
     tokens.ts        # char → token estimate
   bridge.ts          # ISOLATED content script
   sw.ts              # service worker: storage, aggregates, alarms, sync
-  sync/deskbuddy.ts
+  sync/hub.ts
   popup/ popup.html popup.ts popup.css
   options/ options.html options.ts
 test/
@@ -23,11 +23,11 @@ test/
 ```json
 {
   "manifest_version": 3,
-  "name": "DeskBuddy Usage Tracker",
+  "name": "Claude Usage Tracker",
   "version": "0.1.0",
   "permissions": ["storage", "alarms"],
   "host_permissions": ["https://claude.ai/*"],
-  "optional_host_permissions": ["http://*/*"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
   "background": { "service_worker": "sw.js", "type": "module" },
   "content_scripts": [
     { "matches": ["https://claude.ai/*"], "js": ["inject.js"],
@@ -41,6 +41,6 @@ test/
 ```
 
 ## Messaging
-`inject → window.postMessage({ns:"deskbuddy", type:"usage-event", payload})`
-`bridge` checks `event.source === window && data.ns === "deskbuddy"`, then
+`inject → window.postMessage({ns:"claude-usage", type:"usage-event", payload})`
+`bridge` checks `event.source === window && data.ns === "claude-usage"`, then
 `chrome.runtime.sendMessage`. SW validates every field type before storing.

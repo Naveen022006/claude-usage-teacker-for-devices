@@ -86,7 +86,7 @@ export function createClaudeStreamParser(
     try {
       j = e.data ? JSON.parse(e.data) : {};
     } catch {
-      console.warn("[deskbuddy] bad JSON in SSE event", e.event);
+      console.warn("[claude-usage] bad JSON in SSE event", e.event);
       return;
     }
     if (!isObj(j)) return;
@@ -129,7 +129,7 @@ export function createClaudeStreamParser(
           if (Object.keys(fields).length) onLimitHint?.({ ts: Date.now(), fields });
           return;
         }
-        console.warn("[deskbuddy] unknown SSE event", name);
+        console.warn("[claude-usage] unknown SSE event", name);
     }
   };
 
@@ -141,7 +141,7 @@ export function createClaudeStreamParser(
       try {
         handle(e);
       } catch (err) {
-        console.warn("[deskbuddy] parser error", err);
+        console.warn("[claude-usage] parser error", err);
       }
     },
     finish(outcome) {

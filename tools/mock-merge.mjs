@@ -1,10 +1,8 @@
-// Pure merge logic for the mock DeskBuddy server. Mirrors firmware/SPEC.md "Merge rules".
-export const MAX_DEVICES = 8;
-export const MAX_MODELS = 6;
+// Pure merge logic for the mock Usage Hub. Mirrors docs/04-device-sync.md "Merge rules".
 export const FRESH_MS = 10 * 60 * 1000;
-export const MAX_BODY = 4096;
+export const MAX_BODY = 64 * 1024;
 export const WINDOWS = ["today", "last5h", "last7d"];
-const LIM = { deviceId: 64, deviceName: 32, model: 40 };
+const LIM = { deviceId: 128, deviceName: 100, model: 100 };
 
 const trunc = (v, n) => String(v ?? "").slice(0, n);
 const num = (v) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0);
@@ -23,21 +21,15 @@ function normWindow(w) {
   out.messages = num(w.messages);
   out.promptTokens = num(w.promptTokens);
   out.outputTokens = num(w.outputTokens);
-  const models = [];
   if (isObj(w.byModel)) {
     for (const [name, m] of Object.entries(w.byModel)) {
       if (!isObj(m)) continue;
-      models.push([trunc(name, LIM.model), { messages: num(m.messages), tokens: num(m.tokens) }]);
+      const key = trunc(name, LIM.model);
+      const c = out.byModel[key] ?? (out.byModel[key] = { messages: 0, tokens: 0 });
+      c.messages += num(m.messages);
+      c.tokens += num(m.tokens);
     }
   }
-  models.sort((a, b) => b[1].tokens - a[1].tokens);
-  const add = (name, m) => {
-    const c = out.byModel[name] ?? (out.byModel[name] = { messages: 0, tokens: 0 });
-    c.messages += m.messages;
-    c.tokens += m.tokens;
-  };
-  models.slice(0, MAX_MODELS).forEach(([n, m]) => add(n, m));
-  models.slice(MAX_MODELS).forEach(([, m]) => add("other", m));
   return out;
 }
 
@@ -58,24 +50,23 @@ export function newState() {
   return { devices: new Map(), account: null };
 }
 
-/** Mutates and returns state. */
+/** Mutates and returns state. A report older (by sentAt) than the stored one for that device is ignored. */
 export function applyReport(state, report, now = Date.now()) {
   const id = trunc(report.deviceId, LIM.deviceId);
-  const stored = {
-    deviceId: id,
-    deviceName: trunc(report.deviceName, LIM.deviceName),
-    source: trunc(report.source, 16),
-    estimated: report.estimated === true,
-    receivedAt: now,
-    sentAt: num(report.sentAt),
-    windows: Object.fromEntries(WINDOWS.map((k) => [k, normWindow(report.windows?.[k])])),
-  };
-  if (!state.devices.has(id) && state.devices.size >= MAX_DEVICES) {
-    let oldest = null;
-    for (const d of state.devices.values()) if (!oldest || d.receivedAt < oldest.receivedAt) oldest = d;
-    state.devices.delete(oldest.deviceId);
+  const sentAt = num(report.sentAt);
+  const prev = state.devices.get(id);
+  if (!prev || sentAt >= prev.sentAt) {
+    state.devices.set(id, {
+      deviceId: id,
+      deviceName: trunc(report.deviceName, LIM.deviceName),
+      source: trunc(report.source, 16),
+      estimated: report.estimated === true,
+      receivedAt: now,
+      sentAt,
+      windows: Object.fromEntries(WINDOWS.map((k) => [k, normWindow(report.windows?.[k])])),
+    });
   }
-  state.devices.set(id, stored);
+  // Newest account snapshot wins across all devices (account-wide: shown once, never summed).
   const acc = normAccount(report.account);
   if (acc && (!state.account || acc.fetchedAt > state.account.fetchedAt)) state.account = acc;
   return state;

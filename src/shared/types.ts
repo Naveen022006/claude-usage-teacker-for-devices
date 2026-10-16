@@ -63,18 +63,18 @@ export interface DeviceInfo {
 }
 
 export interface Settings {
-  deskbuddyUrl: string; // e.g. "http://deskbuddy.local"
+  hubUrl: string; // e.g. "https://my-hub.vercel.app"; "" = not configured
   syncEnabled: boolean;
   charsPerToken: number; // 2.5–5, default 3.6
-  sharedToken: string; // sent as X-DeskBuddy-Token when non-empty
+  hubToken: string; // sent as "Authorization: Bearer <token>" when non-empty
   pollAccountUsage: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  deskbuddyUrl: "http://deskbuddy.local",
+  hubUrl: "",
   syncEnabled: false,
   charsPerToken: 3.6,
-  sharedToken: "",
+  hubToken: "",
   pollAccountUsage: false,
 };
 

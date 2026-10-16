@@ -8,8 +8,7 @@ import { loadState, saveState } from "../src/state";
 let dir: string;
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "dbcc-"));
-  vi.stubEnv("DESKBUDDY_URL", "");
-  vi.stubEnv("DESKBUDDY_TOKEN", "");
+  for (const k of ["CLAUDE_USAGE_HUB_URL", "CLAUDE_USAGE_HUB_TOKEN", "DESKBUDDY_URL", "DESKBUDDY_TOKEN"]) vi.stubEnv(k, "");
 });
 afterEach(async () => {
   vi.unstubAllEnvs();
@@ -22,7 +21,7 @@ describe("config", () => {
     expect(a.scanIntervalSec).toBe(10);
     expect(a.heartbeatSec).toBe(60);
     expect(a.backfillDays).toBe(7);
-    expect(a.deskbuddyUrl).toBe("");
+    expect(a.hubUrl).toBe("");
     expect(a.deviceName).toMatch(/-ClaudeCode$/);
     expect(a.desktopDeviceName).toMatch(/-Desktop$/);
     expect(a.deviceId).toMatch(/^[0-9a-f-]{36}$/);
@@ -32,30 +31,46 @@ describe("config", () => {
 
   it("env overrides url and token without persisting them", async () => {
     await loadConfig(dir);
-    vi.stubEnv("DESKBUDDY_URL", "http://x.local");
-    vi.stubEnv("DESKBUDDY_TOKEN", "tok");
+    vi.stubEnv("CLAUDE_USAGE_HUB_URL", "http://x.local");
+    vi.stubEnv("CLAUDE_USAGE_HUB_TOKEN", "tok");
     const c = await loadConfig(dir);
-    expect(c.deskbuddyUrl).toBe("http://x.local");
-    expect(c.sharedToken).toBe("tok");
+    expect(c.hubUrl).toBe("http://x.local");
+    expect(c.hubToken).toBe("tok");
     const onDisk = JSON.parse(await readFile(configPath(dir), "utf8"));
-    expect(onDisk.deskbuddyUrl).toBe("");
+    expect(onDisk.hubUrl).toBe("");
   });
 
   it("falls back to default and warns on bad types", async () => {
-    await writeFile(configPath(dir), JSON.stringify({ scanIntervalSec: "fast", deskbuddyUrl: 5, backfillDays: 3 }));
+    await writeFile(configPath(dir), JSON.stringify({ scanIntervalSec: "fast", hubUrl: 5, backfillDays: 3 }));
     const warn = vi.fn();
     const c = await loadConfig(dir, warn);
     expect(c.scanIntervalSec).toBe(10);
-    expect(c.deskbuddyUrl).toBe("");
+    expect(c.hubUrl).toBe("");
     expect(c.backfillDays).toBe(3);
     expect(warn).toHaveBeenCalledTimes(2);
   });
 
+  it("migrates legacy deskbuddyUrl/sharedToken keys once", async () => {
+    await writeFile(configPath(dir), JSON.stringify({ deviceId: "abc", deskbuddyUrl: "https://h.example", sharedToken: "secret" }));
+    const c = await loadConfig(dir);
+    expect(c.hubUrl).toBe("https://h.example");
+    expect(c.hubToken).toBe("secret");
+    const onDisk = JSON.parse(await readFile(configPath(dir), "utf8"));
+    expect(onDisk.hubUrl).toBe("https://h.example");
+    expect(onDisk.deskbuddyUrl).toBeUndefined();
+    expect(onDisk.sharedToken).toBeUndefined();
+  });
+
+  it("drops the old LAN default url", async () => {
+    await writeFile(configPath(dir), JSON.stringify({ deskbuddyUrl: "http://deskbuddy.local" }));
+    expect((await loadConfig(dir)).hubUrl).toBe("");
+  });
+
   it("saveConfig merges a partial", async () => {
     const a = await loadConfig(dir);
-    await saveConfig({ deskbuddyUrl: "http://d.local" }, dir);
+    await saveConfig({ hubUrl: "http://d.local" }, dir);
     const b = await loadConfig(dir);
-    expect(b.deskbuddyUrl).toBe("http://d.local");
+    expect(b.hubUrl).toBe("http://d.local");
     expect(b.deviceId).toBe(a.deviceId);
   });
 });

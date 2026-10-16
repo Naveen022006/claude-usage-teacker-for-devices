@@ -33,6 +33,8 @@ export interface TrayState {
   limitsNote: string | null;
   limits: TrayLimit[]; // always includes Session (5h) and Weekly (pct null when unknown)
   models: TrayModel[]; // sorted by pct5h desc, then tokens desc; max 6
+  /** true when per-model points include a baseline split estimated from local events (tray shows "≈"). */
+  modelsEstimated?: boolean;
   other: { pct5h: number | null; pctWeek: number | null } | null;
   /** Tray tooltip (≤ 127 chars, NotifyIcon limit): "Claude · Session 42% (3h 5m) · Weekly 11%". */
   tooltip: string;

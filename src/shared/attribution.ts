@@ -25,6 +25,8 @@ export interface WindowLedger {
   byModel: Record<string, number>;
   /** points not attributable: other devices, mobile, usage before tracking started */
   other: number;
+  /** true when the starting utilisation was split across local events (estimate) instead of going to `other` */
+  baselineEstimated?: boolean;
 }
 
 export type PendingWeights = Record<string, number>;
@@ -39,7 +41,14 @@ export interface Ledger {
 }
 
 /** What the widget needs. */
-export type AttributionView = Partial<Record<AttrWindow, { byModel: Record<string, number>; other: number }>>;
+export type AttributionView = Partial<Record<AttrWindow, { byModel: Record<string, number>; other: number; baselineEstimated?: boolean }>>;
+
+export const WINDOW_MS: Record<AttrWindow, number> = { five_hour: 5 * 3600_000, seven_day: 7 * 24 * 3600_000 };
+
+/** Optional hook: weights per model of the replies already inside the current cycle (used for the first-sight split). */
+export interface ApplyOptions {
+  baseline?: (window: AttrWindow, cycleStartMs: number) => Record<string, number>;
+}
 
 export const CYCLE_TOLERANCE_MS = 120_000;
 const MAX_HUB_DEVICES = 50;
@@ -146,6 +155,7 @@ export function applyReading(
   ledger: Ledger,
   usage: { windows: { name: string; utilization: number; resetsAt?: string }[] } | null | undefined,
   now: number,
+  opts?: ApplyOptions,
 ): Ledger {
   if (!usage) return ledger;
   if (now < ledger.lastReadingAt) return ledger; // out-of-order (stale) reading
@@ -164,13 +174,23 @@ export function applyReading(
       const fresh: WindowLedger = { cycle, lastUtil: util, byModel: {}, other: 0 };
       // First sight: whatever is already used happened before tracking (pending replies are inside it).
       // Rollover: the new cycle's first points can only come from replies we just saw.
-      if (prev && util > 0) distribute(fresh, util, pend);
-      else fresh.other = util;
+      if (prev && util > 0 && Object.values(pend ?? {}).some((v) => v > 0)) distribute(fresh, util, pend);
+      else if (util > 0 && opts?.baseline && Number.isFinite(Date.parse(cycle))) {
+        let weights: PendingWeights = {};
+        try {
+          weights = opts.baseline(name, Date.parse(cycle) - WINDOW_MS[name]) ?? {};
+        } catch {
+          /* fall back to other */
+        }
+        const before = fresh.other;
+        distribute(fresh, util, weights);
+        if (fresh.other === before) fresh.baselineEstimated = true;
+      } else fresh.other = util;
       windows[name] = fresh;
       delete pendingW[name];
       continue;
     }
-    const w: WindowLedger = { cycle: prev.cycle, lastUtil: util, byModel: { ...prev.byModel }, other: prev.other };
+    const w: WindowLedger = { cycle: prev.cycle, lastUtil: util, byModel: { ...prev.byModel }, other: prev.other, ...(prev.baselineEstimated ? { baselineEstimated: true } : {}) };
     const delta = util - (prev.lastUtil ?? util);
     if (delta > 0) {
       distribute(w, delta, pend);
@@ -219,7 +239,7 @@ export function attributionView(l: Ledger): AttributionView {
   const out: AttributionView = {};
   for (const name of ATTR_WINDOWS) {
     const w = l.windows[name];
-    if (w) out[name] = { byModel: { ...w.byModel }, other: w.other };
+    if (w) out[name] = { byModel: { ...w.byModel }, other: w.other, ...(w.baselineEstimated ? { baselineEstimated: true } : {}) };
   }
   return out;
 }

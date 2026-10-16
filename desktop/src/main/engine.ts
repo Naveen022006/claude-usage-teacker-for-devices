@@ -27,6 +27,7 @@ interface Persisted {
   cursors: Cursors;
   events: UsageEvent[];
   ledger: Ledger;
+  ledgerRev?: number;
 }
 
 const DAY = 24 * 3600_000;
@@ -34,11 +35,22 @@ const LIMITS = { retentionMs: 8 * DAY, maxEvents: 250_000 };
 const WRITE_DEBOUNCE_MS = 2000;
 const REPLY_DEBOUNCE_MS = 1000;
 const H5 = 5 * 3600_000;
+/** Bump to force a one-time ledger reset (events/cursors kept) so the next reading re-baselines. */
+const LEDGER_REV = 2;
 
-export function createEngine(opts: { dataDir: string; projectsDir: string; scanIntervalMs?: number; now?: () => number }): Engine {
+export type UsageSource = "desktop" | "claude-code";
+
+export function parseSources(v: string | undefined): UsageSource[] | null {
+  if (!v) return null;
+  const out = v.split(",").map((x) => x.trim().toLowerCase()).filter((x): x is UsageSource => x === "desktop" || x === "claude-code");
+  return out.length ? out : null;
+}
+
+export function createEngine(opts: { dataDir: string; projectsDir: string; scanIntervalMs?: number; sources?: UsageSource[]; now?: () => number }): Engine {
   const now = opts.now ?? Date.now;
   const interval = opts.scanIntervalMs ?? 5000;
   const file = join(opts.dataDir, "engine-state.json");
+  const sources = new Set<string>(opts.sources ?? parseSources(process.env.USAGE_METER_SOURCES) ?? (["desktop"] as UsageSource[]));
 
   let cursors: Cursors = {};
   let events: UsageEvent[] = [];
@@ -81,7 +93,8 @@ export function createEngine(opts: { dataDir: string; projectsDir: string; scanI
       if (!raw || raw.v !== 1 || !Array.isArray(raw.events) || !raw.cursors || typeof raw.cursors !== "object") throw new Error("bad shape");
       cursors = raw.cursors;
       events = raw.events.filter((e: any) => e && typeof e.id === "string" && Number.isFinite(e.ts));
-      ledger = normalizeLedger(raw.ledger);
+      ledger = raw.ledgerRev === LEDGER_REV ? normalizeLedger(raw.ledger) : emptyLedger();
+      if (raw.ledgerRev !== LEDGER_REV) dirty = true;
       backfillDone = true;
     } catch (e: any) {
       console.warn(`[engine] corrupt state, starting fresh (${e?.message ?? e})`);
@@ -98,7 +111,7 @@ export function createEngine(opts: { dataDir: string; projectsDir: string; scanI
   }
 
   function serialize(): string {
-    const p: Persisted = { v: 1, cursors, events, ledger };
+    const p: Persisted = { v: 1, cursors, events, ledger, ledgerRev: LEDGER_REV };
     return JSON.stringify(p);
   }
 
@@ -168,6 +181,7 @@ export function createEngine(opts: { dataDir: string; projectsDir: string; scanI
       let added = 0;
       if (backfillDone) {
         for (const e of fresh) {
+          if (!sources.has(e.source)) continue;
           if (e.ts < t - H5) continue; // stale lines (old file resumed) cannot explain a new reading
           ledger = addContribution(ledger, { model: e.model, weight: replyWeight(e.model, promptForWeight(e), e.outputTokens), ts: e.ts, source: "local" });
           added++;
@@ -215,7 +229,16 @@ export function createEngine(opts: { dataDir: string; projectsDir: string; scanI
     },
     applyAccountUsage(u, at) {
       try {
-        ledger = applyReading(ledger, u, at);
+        ledger = applyReading(ledger, u, at, {
+          baseline: (_w, startMs) => {
+            const out: Record<string, number> = {};
+            for (const e of events) {
+              if (!sources.has(e.source) || e.ts < startMs || e.ts > at) continue;
+              out[e.model] = (out[e.model] ?? 0) + replyWeight(e.model, promptForWeight(e), e.outputTokens);
+            }
+            return out;
+          },
+        });
         schedulePersist();
         fire(changeCbs);
       } catch (e: any) {
@@ -234,8 +257,10 @@ export function createEngine(opts: { dataDir: string; projectsDir: string; scanI
       const t = now();
       const local: DesktopState["local"] = [];
       const tokens5hByModel: Record<string, number> = {};
+      const srcEvents = events.filter((e) => sources.has(e.source));
       for (const source of ["claude-code", "desktop"] as const) {
-        const evs = events.filter((e) => e.source === source);
+        if (!sources.has(source)) continue;
+        const evs = srcEvents.filter((e) => e.source === source);
         if (!evs.length) continue;
         const aggregates = computeAggregates(evs, t);
         local.push({ source, aggregates });
@@ -243,7 +268,7 @@ export function createEngine(opts: { dataDir: string; projectsDir: string; scanI
       }
       // NEW tokens: prompt minus cache reads, plus output (cache reads barely count against limits).
       const tokensNew5hByModel: Record<string, number> = {};
-      for (const e of events) {
+      for (const e of srcEvents) {
         if (e.ts < t - H5 || e.ts > t) continue;
         const n = Math.max(0, e.promptTokens - (e.cacheReadTokens ?? 0)) + e.outputTokens;
         tokensNew5hByModel[e.model] = (tokensNew5hByModel[e.model] ?? 0) + n;

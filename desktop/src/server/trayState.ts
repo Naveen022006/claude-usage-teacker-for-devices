@@ -13,6 +13,24 @@ export interface TrayInput {
   attribution: AttributionView;
   /** NEW tokens (cache reads excluded) per model id, last 5 h. */
   tokensNew5hByModel: Record<string, number>;
+  /** Epoch ms until which account polling is backed off (rate limit / errors); null = not backing off. */
+  backoffUntil?: number | null;
+}
+
+export const STALE_AFTER_MS = 10 * 60_000;
+const NOTE_RATE_LIMIT = "Anthropic rate limit";
+
+/** One short line: error note (+ remaining backoff for rate limits) and/or reading age when stale. */
+export function composeLimitsNote(i: Pick<TrayInput, "now" | "limitsNote" | "accountUsage" | "backoffUntil">): string | null {
+  let note = i.limitsNote;
+  const left = i.backoffUntil && i.backoffUntil > i.now ? i.backoffUntil - i.now : 0;
+  if (note === NOTE_RATE_LIMIT && left > 0) note = `${note} — retrying in ${Math.max(1, Math.ceil(left / 60_000))}m`;
+  const age = i.accountUsage ? i.now - i.accountUsage.fetchedAt : 0;
+  if (i.accountUsage && age > STALE_AFTER_MS) {
+    const ago = shortCountdown(age);
+    note = note ? `${note} · ${ago} old` : `Updated ${ago} ago`;
+  }
+  return note;
 }
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
@@ -80,10 +98,11 @@ export function buildTrayState(i: TrayInput): TrayState {
     updatedAt: i.now,
     plan: i.plan,
     limitsSource: i.limitsSource,
-    limitsNote: i.limitsNote,
+    limitsNote: composeLimitsNote(i),
     limits,
     models: models.slice(0, 6),
     other,
+    modelsEstimated: !!(a5?.baselineEstimated || aw?.baselineEstimated),
     tooltip,
     iconPct,
     iconTone: iconPct === null ? "ok" : sbTone(iconPct),

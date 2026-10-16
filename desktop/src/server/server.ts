@@ -3,7 +3,7 @@
 // Binds 127.0.0.1 only; a random per-run key in the URL path + Host check keep other local pages out.
 // Never logs the hub token. Never reads message content.
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { extname, join } from "node:path";
@@ -11,14 +11,15 @@ import type { AccountUsage, AccountWindow, Plan } from "../../../src/shared/type
 import { normalizeBase } from "../../../src/sync/hub";
 import type { DesktopRequest, DesktopState } from "../shared/ipc";
 import { createEngine, type Engine } from "../main/engine";
-import { createAccountSource } from "./accountUsage";
+import { createAccountSource, NOTE_REFRESH } from "./accountUsage";
 import { buildTrayState } from "./trayState";
 import type { TrayState } from "../shared/tray";
 import { loadConfig } from "../../../daemon/src/config";
 
 export const APP_NAME = "usage-meter-desktop";
 export const DEFAULT_PORT = 47823;
-const POLL_MS = 60_000;
+const POLL_MS = 3 * 60_000;
+const BACKOFF_STEPS_MS = [2, 4, 8, 15].map((m) => m * 60_000);
 const SSE_KEEPALIVE_MS = 25_000;
 const MIME: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png" };
 const STATIC = new Set(["renderer.js", "styles.css", "icon.png"]);
@@ -42,6 +43,8 @@ export interface ServerOpts {
   /** Injectable fetch for the account usage API (tests). */
   accountFetch?: typeof fetch;
   accountPollMs?: number;
+  /** Injectable clock for backoff/staleness (tests). */
+  now?: () => number;
   scanIntervalMs?: number;
   /** Called when the server wants to end the process (quit request). */
   onExit?: () => void;
@@ -111,8 +114,41 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
   let plan: Plan | null = null;
   let limitsSource: TrayState["limitsSource"] = null;
   let limitsNote: string | null = null;
-  const account = createAccountSource({ path: opts.credentialsPath === null ? join(opts.dataDir, "no-credentials.json") : opts.credentialsPath, fetchFn: opts.accountFetch });
+  const account = createAccountSource({ path: opts.credentialsPath === null ? join(opts.dataDir, "no-credentials.json") : opts.credentialsPath, fetchFn: opts.accountFetch, now: opts.now });
   let accountBusy: Promise<void> | null = null;
+  const clock = opts.now ?? Date.now;
+  let backoffUntil: number | null = null;
+  let failures = 0;
+  let lastLog = "";
+  const logState = (s: string) => {
+    if (s === lastLog) return;
+    lastLog = s;
+    console.log(`[usage-meter] account usage: ${s}`);
+  };
+  const hhmm = (t: number) => new Date(t).toTimeString().slice(0, 5);
+
+  // Last good reading survives restarts (never contains tokens).
+  const accountFile = join(opts.dataDir, "account.json");
+  try {
+    const j = JSON.parse(readFileSync(accountFile, "utf8")) as Record<string, unknown>;
+    const u = parseAccount(j.usage);
+    if (u) {
+      accountUsage = u;
+      limitsSource = "account";
+      if (typeof j.plan === "string") plan = j.plan as Plan;
+    }
+  } catch {
+    /* none yet */
+  }
+  function saveAccount(u: AccountUsage, p: Plan | null): void {
+    try {
+      const tmpFile = `${accountFile}.tmp`;
+      writeFileSync(tmpFile, JSON.stringify({ usage: u, plan: p }));
+      renameSync(tmpFile, accountFile);
+    } catch {
+      /* ignore */
+    }
+  }
 
   function buildState(): DesktopState {
     const e = engine.snapshot();
@@ -194,11 +230,24 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
       if (r.plan) plan = r.plan;
       limitsSource = "account";
       limitsNote = null;
+      failures = 0;
+      backoffUntil = null;
+      saveAccount(r.usage, r.plan ?? plan);
+      logState("ok");
       engine.applyAccountUsage(r.usage, r.usage.fetchedAt);
     } else if (r.kind === "error") {
       if (r.plan) plan = r.plan;
       limitsNote = r.note;
       if (limitsSource === null && !accountUsage) limitsSource = "account";
+      if (r.note === NOTE_REFRESH) {
+        backoffUntil = null;
+        logState("sign-in needs refresh");
+      } else {
+        const wait = r.retryAfterMs !== undefined ? r.retryAfterMs : BACKOFF_STEPS_MS[Math.min(failures, BACKOFF_STEPS_MS.length - 1)];
+        failures++;
+        backoffUntil = clock() + wait;
+        logState(`${r.httpStatus === 429 ? "rate-limited" : r.httpStatus ? `HTTP ${r.httpStatus}` : "unreachable"}, retrying after ${hhmm(backoffUntil)}`);
+      }
     } else if (hub) {
       limitsNote = null;
       await hubFetch();
@@ -209,6 +258,7 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
   }
   /** Account (Claude Code sign-in) when available; Usage Hub only as fallback when there is no credentials file. */
   function limitsRefresh(): Promise<void> {
+    if (backoffUntil !== null && clock() < backoffUntil) return Promise.resolve();
     if (!accountBusy) accountBusy = accountFetchOnce().catch(() => {}).finally(() => { accountBusy = null; });
     return accountBusy;
   }
@@ -317,7 +367,7 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
         if (rest === "api/state" && req.method === "GET") return json(res, 200, buildState());
         if (rest === "api/tray" && req.method === "GET") {
           const e = engine.snapshot();
-          return json(res, 200, buildTrayState({ now: Date.now(), plan, limitsSource, limitsNote, accountUsage, attribution: e.attribution, tokensNew5hByModel: e.tokensNew5hByModel }));
+          return json(res, 200, buildTrayState({ now: clock(), backoffUntil, plan, limitsSource, limitsNote, accountUsage, attribution: e.attribution, tokensNew5hByModel: e.tokensNew5hByModel }));
         }
         if (rest === "api/events" && req.method === "GET") {
           res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive", "X-Content-Type-Options": "nosniff" });

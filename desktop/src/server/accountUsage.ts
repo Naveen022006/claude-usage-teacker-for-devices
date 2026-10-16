@@ -12,6 +12,17 @@ export const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 export const NOTE_REFRESH = "Open Claude Code once to refresh sign-in";
 export const NOTE_SIGN_IN = "Sign in to Claude Code to see plan limits";
 export const NOTE_OFFLINE = "Couldn't reach Anthropic";
+export const NOTE_RATE_LIMIT = "Anthropic rate limit";
+export const noteHttp = (status: number): string => `Anthropic error (HTTP ${status})`;
+
+/** Retry-After: delta-seconds or HTTP date -> ms from `nowMs` (null when absent/unparseable). */
+export function parseRetryAfter(v: string | null | undefined, nowMs: number): number | null {
+  if (!v) return null;
+  const t = v.trim();
+  if (/^\d+(\.\d+)?$/.test(t)) return Math.max(0, Math.round(Number(t) * 1000));
+  const d = Date.parse(t);
+  return Number.isFinite(d) ? Math.max(0, d - nowMs) : null;
+}
 
 export function credentialsPath(env: NodeJS.ProcessEnv = process.env): string {
   const dir = env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
@@ -51,7 +62,7 @@ export function readCredentials(path: string): Credentials {
 export type AccountPoll =
   | { kind: "ok"; usage: AccountUsage; plan: Plan | null }
   | { kind: "none"; note: string } // no credentials file (hub may be used instead)
-  | { kind: "error"; note: string; plan: Plan | null }; // keep the last reading, show the note
+  | { kind: "error"; note: string; plan: Plan | null; httpStatus?: number; retryAfterMs?: number }; // keep the last reading, show the note
 
 export interface AccountSourceOpts {
   path?: string;
@@ -76,9 +87,16 @@ export function createAccountSource(opts: AccountSourceOpts = {}): { poll(): Pro
           signal: AbortSignal.timeout(10_000),
         });
         if (res.status === 401 || res.status === 403) return { kind: "error", note: NOTE_REFRESH, plan: c.plan };
-        if (!res.ok) return { kind: "error", note: NOTE_OFFLINE, plan: c.plan };
+        if (res.status === 429) {
+          const ra = parseRetryAfter(res.headers?.get?.("retry-after"), now());
+          return { kind: "error", note: NOTE_RATE_LIMIT, plan: c.plan, httpStatus: 429, ...(ra !== null ? { retryAfterMs: ra } : {}) };
+        }
+        if (!res.ok) {
+          const ra = parseRetryAfter(res.headers?.get?.("retry-after"), now());
+          return { kind: "error", note: noteHttp(res.status), plan: c.plan, httpStatus: res.status, ...(ra !== null ? { retryAfterMs: ra } : {}) };
+        }
         const usage = parseAccountUsage(await res.json().catch(() => null), now());
-        if (!usage) return { kind: "error", note: NOTE_OFFLINE, plan: c.plan };
+        if (!usage) return { kind: "error", note: NOTE_OFFLINE, plan: c.plan, httpStatus: res.status };
         return { kind: "ok", usage, plan: c.plan };
       } catch {
         return { kind: "error", note: NOTE_OFFLINE, plan: c.plan };

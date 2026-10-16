@@ -45,12 +45,14 @@ const usage = (five: number, at = NOW): AccountUsage => ({
   ] as any,
 });
 
-const mk = () => createEngine({ dataDir: data, projectsDir: proj, scanIntervalMs: 3_600_000, now: () => NOW });
+const BOTH = ["desktop", "claude-code"] as const;
+const mk = (sources: ("desktop" | "claude-code")[] = [...BOTH]) => createEngine({ dataDir: data, projectsDir: proj, scanIntervalMs: 3_600_000, sources, now: () => NOW });
+const DAY = 86_400_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe("engine", () => {
   it("backfill creates no contributions; a new line does and fires onReplies", async () => {
-    await writeFile(file, line("old1"));
+    await writeFile(file, line("old1", { ago: 3 * DAY }));
     const e = mk();
     let replies = 0;
     e.onReplies(() => replies++);
@@ -75,7 +77,7 @@ describe("engine", () => {
   });
 
   it("splits delta between models by weight", async () => {
-    await writeFile(file, line("old1"));
+    await writeFile(file, line("old1", { ago: 3 * DAY }));
     const e = mk();
     e.start();
     await e.refreshNow();
@@ -90,7 +92,7 @@ describe("engine", () => {
   });
 
   it("weight discounts cache reads", async () => {
-    await writeFile(file, line("old1"));
+    await writeFile(file, line("old1", { ago: 3 * DAY }));
     const e = mk();
     e.start();
     await e.refreshNow();
@@ -121,7 +123,7 @@ describe("engine", () => {
   });
 
   it("persists across restarts (no re-backfill, ledger kept)", async () => {
-    await writeFile(file, line("old1"));
+    await writeFile(file, line("old1", { ago: 3 * DAY }));
     const e1 = mk();
     e1.start();
     await e1.refreshNow();
@@ -137,7 +139,7 @@ describe("engine", () => {
     e2.start();
     expect(e2.snapshot().attribution.five_hour!.other).toBeCloseTo(10);
     await e2.refreshNow();
-    expect(e2.snapshot().local[0].aggregates.last5h.messages).toBe(2);
+    expect(e2.snapshot().local[0].aggregates.last5h.messages).toBe(1);
     e2.applyAccountUsage(usage(15), NOW + 1000);
     expect(e2.snapshot().attribution.five_hour!.byModel["claude-sonnet-5-5"]).toBeCloseTo(5);
     e2.stop();
@@ -175,5 +177,84 @@ describe("new tokens (cache reads excluded)", () => {
     const snap = e.snapshot();
     e.stop();
     expect(snap.tokensNew5hByModel["claude-sonnet-5-5"]).toBe(100 + 50 + 20);
+  });
+});
+
+describe("desktop-only sources and baseline split", () => {
+  it("defaults to desktop events only (aggregates, tokens, attribution)", async () => {
+    await writeFile(file, line("a", { entry: "cli", input: 10, out: 5 }) + line("b", { entry: "claude-desktop", input: 20, out: 7 }));
+    const e = createEngine({ dataDir: data, projectsDir: proj, scanIntervalMs: 3_600_000, now: () => NOW });
+    e.start();
+    await e.refreshNow();
+    const s = e.snapshot();
+    expect(s.local.map((l) => l.source)).toEqual(["desktop"]);
+    expect(s.tokens5hByModel["claude-sonnet-5-5"]).toBe(27);
+    expect(s.tokensNew5hByModel["claude-sonnet-5-5"]).toBe(27);
+    e.applyAccountUsage(usage(10), NOW);
+    await appendFile(file, line("c", { entry: "cli", model: "claude-opus-4-1" }));
+    await e.refreshNow();
+    e.applyAccountUsage(usage(14), NOW + 1000);
+    expect(e.snapshot().attribution.five_hour!.byModel["claude-opus-4-1"]).toBeUndefined();
+    e.stop();
+  });
+
+  it("splits the first reading across window events by weight and flags it estimated", async () => {
+    await writeFile(
+      file,
+      line("s1", { entry: "claude-desktop", model: "claude-sonnet-5-5", input: 100, out: 50, ago: 60_000 }) +
+        line("o1", { entry: "claude-desktop", model: "claude-opus-4-1", input: 100, out: 50, ago: 120_000 }) +
+        line("cc", { entry: "cli", model: "claude-haiku-4-5", ago: 60_000 }) +
+        line("old", { entry: "claude-desktop", model: "claude-haiku-4-5", ago: 3 * DAY }),
+    );
+    const e = createEngine({ dataDir: data, projectsDir: proj, scanIntervalMs: 3_600_000, now: () => NOW });
+    e.start();
+    await e.refreshNow();
+    e.applyAccountUsage(usage(60), NOW);
+    const a = e.snapshot().attribution.five_hour!;
+    expect(a.byModel["claude-sonnet-5-5"]).toBeCloseTo(10);
+    expect(a.byModel["claude-opus-4-1"]).toBeCloseTo(50);
+    expect(a.byModel["claude-haiku-4-5"]).toBeUndefined();
+    expect(a.other).toBe(0);
+    expect(a.baselineEstimated).toBe(true);
+    e.stop();
+  });
+
+  it("no events in window -> other, not estimated", async () => {
+    await writeFile(file, line("old", { entry: "claude-desktop", ago: 3 * DAY }));
+    const e = createEngine({ dataDir: data, projectsDir: proj, scanIntervalMs: 3_600_000, now: () => NOW });
+    e.start();
+    await e.refreshNow();
+    e.applyAccountUsage(usage(20), NOW);
+    const a = e.snapshot().attribution.five_hour!;
+    expect(a.other).toBeCloseTo(20);
+    expect(a.baselineEstimated).toBeUndefined();
+    e.stop();
+  });
+
+  it("migrates an old ledger once (events kept)", async () => {
+    await writeFile(file, line("d1", { entry: "claude-desktop" }));
+    const old = createEngine({ dataDir: data, projectsDir: proj, scanIntervalMs: 3_600_000, now: () => NOW });
+    old.start();
+    await old.refreshNow();
+    old.applyAccountUsage(usage(10), NOW);
+    old.stop();
+    const f = join(data, "engine-state.json");
+    const saved = JSON.parse(await readFile(f, "utf8"));
+    expect(saved.ledgerRev).toBe(2);
+    // simulate pre-migration state: baseline in other, no rev
+    delete saved.ledgerRev;
+    saved.ledger.windows.five_hour.byModel = {};
+    saved.ledger.windows.five_hour.other = 10;
+    await writeFile(f, JSON.stringify(saved));
+    const e = createEngine({ dataDir: data, projectsDir: proj, scanIntervalMs: 3_600_000, now: () => NOW });
+    e.start();
+    expect(e.snapshot().attribution).toEqual({});
+    e.applyAccountUsage(usage(10), NOW + 1000);
+    expect(e.snapshot().attribution.five_hour!.byModel["claude-sonnet-5-5"]).toBeCloseTo(10);
+    e.stop();
+    const again = createEngine({ dataDir: data, projectsDir: proj, scanIntervalMs: 3_600_000, now: () => NOW });
+    again.start();
+    expect(again.snapshot().attribution.five_hour!.byModel["claude-sonnet-5-5"]).toBeCloseTo(10);
+    again.stop();
   });
 });

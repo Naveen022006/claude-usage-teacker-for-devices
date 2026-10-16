@@ -1,6 +1,6 @@
 # Usage Meter Desktop - Windows tray front-end (PowerShell 5.1, pure .NET, no compiled binaries).
 # Contract: desktop/src/shared/tray.ts. Keep this file ASCII-only (PS 5.1 reads BOM-less files as ANSI).
-param([switch]$SelfTest)
+param([switch]$SelfTest, [double]$TestScale = 0)
 Set-StrictMode -Version 2
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -54,11 +54,11 @@ function PxS([double]$v) { [int][Math]::Round($v * $script:Scale) }
 function ToneColor($t) {
   switch ([string]$t) { 'warn' { $script:cWarn } 'bad' { $script:cBad } default { $script:cBlue } }
 }
-function FmtPct($v, [bool]$sub) {
+function FmtPct($v, [bool]$sub, [string]$prefix = '') {
   if ($null -eq $v) { return $script:Dash }
   $n = [double]$v
-  if ($sub -and $n -gt 0 -and $n -lt 1) { return '<1%' }
-  return ('{0}%' -f [int][Math]::Round($n))
+  if ($sub -and $n -gt 0 -and $n -lt 1) { return ($prefix + '<1%') }
+  return ($prefix + ('{0}%' -f [int][Math]::Round($n)))
 }
 function ParseTime($v) {
   if ($null -eq $v -or "$v" -eq '') { return $null }
@@ -122,21 +122,33 @@ function Clock($g, $x, $y, $color) { # small drawn clock, ~ 11 logical px, top-l
   $g.SmoothingMode = 'Default'; $p.Dispose()
 }
 
+function New-RoundPath([double]$x, [double]$y, [double]$w, [double]$h, [double]$r) {
+  $p = New-Object System.Drawing.Drawing2D.GraphicsPath
+  $d = [single]($r * 2)
+  $p.AddArc([single]$x, [single]$y, $d, $d, 180, 90)
+  $p.AddArc([single]($x + $w - $d), [single]$y, $d, $d, 270, 90)
+  $p.AddArc([single]($x + $w - $d), [single]($y + $h - $d), $d, $d, 0, 90)
+  $p.AddArc([single]$x, [single]($y + $h - $d), $d, $d, 90, 90)
+  $p.CloseFigure()
+  return $p
+}
+
 # Draws the whole popup; returns total height in device px. Drawing on a 1x1 bitmap = pure measurement.
 function Draw-Popup($g, [double]$scale, $st, [string]$statusText) {
   $script:Scale = $scale
   $pad = PxS 14; $W = PxS $script:W; $right = $W - $pad; $inner = $W - 2 * $pad
   $g.Clear($script:cBg)
-  $y = PxS 8
+  $y = PxS 12
   $plan = Prop $st 'plan'
-  $head = 'Usage'
-  Txt $g $head $script:fHead $pad $y (PxS 80) (PxS 24) $script:cFg $script:flL
+  $head = 'Claude usage'
+  $hw = TxtW $g $head $script:fHead
+  Txt $g $head $script:fHead $pad $y ($hw + (PxS 4)) (PxS 22) $script:cFg $script:flL
   if ($plan) {
-    $hw = TxtW $g $head $script:fHead
-    $pl = $plan.Substring(0, 1).ToUpper() + $plan.Substring(1)
-    Txt $g ($script:Dot + ' ' + $pl) $script:fSmall ($pad + $hw + (PxS 6)) $y (PxS 120) (PxS 24) $script:cMuted $script:flL
+    $pl = ([string]$plan).Substring(0, 1).ToUpper() + ([string]$plan).Substring(1)
+    Txt $g ($script:Dot + ' ' + $pl) $script:fSmall ($pad + $hw + (PxS 8)) $y (PxS 100) (PxS 22) $script:cMuted $script:flL
   }
-  $y += PxS 30
+  Txt $g 'Claude Desktop' $script:fSmall $pad ($y + (PxS 22)) $inner (PxS 16) $script:cMuted $script:flL
+  $y += PxS 48
 
   if ($null -eq $st) {
     Txt $g $statusText $script:fNorm $pad $y $inner (PxS 22) $script:cMuted $script:flL
@@ -178,6 +190,8 @@ function Draw-Popup($g, [double]$scale, $st, [string]$statusText) {
     Txt $g 'Week' $script:fSmall $wkX $y $cWk (PxS 16) $script:cMuted $script:flR
     Txt $g 'Tokens' $script:fSmall $tokX $y $cTok (PxS 16) $script:cMuted $script:flR
     $y += PxS 22
+    $est = ((Prop $st 'modelsEstimated') -eq $true)
+    $apx = ''; if ($est) { $apx = [string][char]0x2248 }
     $models = @(Prop $st 'models')
     if ($models.Count -eq 0 -or $null -eq $models[0]) {
       Txt $g 'No model usage yet' $script:fSmall $pad $y $inner (PxS 18) $script:cMuted $script:flL
@@ -188,8 +202,8 @@ function Draw-Popup($g, [double]$scale, $st, [string]$statusText) {
         $p5 = Prop $m 'pct5h'; $pw = Prop $m 'pctWeek'
         $c5c = $script:cBlue; if ($null -eq $p5) { $c5c = $script:cMuted }
         $cwc = $script:cBlue; if ($null -eq $pw) { $cwc = $script:cMuted }
-        Txt $g (FmtPct $p5 $true) $script:fNorm $f5X $y $c5 (PxS 20) $c5c $script:flR
-        Txt $g (FmtPct $pw $true) $script:fNorm $wkX $y $cWk (PxS 20) $cwc $script:flR
+        Txt $g (FmtPct $p5 $true $apx) $script:fNorm $f5X $y $c5 (PxS 20) $c5c $script:flR
+        Txt $g (FmtPct $pw $true $apx) $script:fNorm $wkX $y $cWk (PxS 20) $cwc $script:flR
         Txt $g ([string](Prop $m 'tokensText')) $script:fSmall $tokX $y $cTok (PxS 20) $script:cMuted $script:flR
         Bar $g $pad ($y + (PxS 24)) $inner $p5 $script:cBlue
         $y += PxS 34
@@ -198,9 +212,13 @@ function Draw-Popup($g, [double]$scale, $st, [string]$statusText) {
     $o = Prop $st 'other'
     if ($null -ne $o) {
       Txt $g 'Other:' $script:fNorm $pad $y $mlW (PxS 20) $script:cMuted $script:flL
-      Txt $g (FmtPct (Prop $o 'pct5h') $true) $script:fNorm $f5X $y $c5 (PxS 20) $script:cMuted $script:flR
-      Txt $g (FmtPct (Prop $o 'pctWeek') $true) $script:fNorm $wkX $y $cWk (PxS 20) $script:cMuted $script:flR
+      Txt $g (FmtPct (Prop $o 'pct5h') $true $apx) $script:fNorm $f5X $y $c5 (PxS 20) $script:cMuted $script:flR
+      Txt $g (FmtPct (Prop $o 'pctWeek') $true $apx) $script:fNorm $wkX $y $cWk (PxS 20) $script:cMuted $script:flR
       $y += PxS 26
+    }
+    if ($est) {
+      Txt $g ($apx + ' estimated from Claude Desktop usage') $script:fSmall $pad $y $inner (PxS 16) $script:cMuted $script:flL
+      $y += PxS 20
     }
   }
 
@@ -213,10 +231,13 @@ function Draw-Popup($g, [double]$scale, $st, [string]$statusText) {
   Txt $g $ago $script:fSmall $pad $y ($inner - $lw - (PxS 8)) (PxS 18) $script:cMuted $script:flL
   Txt $g 'Refresh' $script:fLink ($right - $lw) $y $lw (PxS 18) $script:cBlue $script:flR
   $script:RefreshRect = New-Object System.Drawing.Rectangle(($right - $lw - (PxS 4)), $y, ($lw + (PxS 8)), (PxS 18))
-  $y += PxS 18 + (PxS 10)
+  $y += PxS 18 + (PxS 14)
 
-  $bp = New-Object System.Drawing.Pen($script:cBorder, 1)
-  $g.DrawRectangle($bp, 0, 0, $W - 1, $y - 1); $bp.Dispose()
+  $bc = [System.Drawing.Color]::FromArgb(46, $script:cFg.R, $script:cFg.G, $script:cFg.B)
+  $bp = New-Object System.Drawing.Pen($bc, 1)
+  $bpath = New-RoundPath 0.5 0.5 ($W - 1) ($y - 1) ((PxS 10) - 1)
+  $g.SmoothingMode = 'AntiAlias'; $g.DrawPath($bp, $bpath); $g.SmoothingMode = 'Default'
+  $bpath.Dispose(); $bp.Dispose()
   return $y
 }
 function Measure-Popup([double]$scale, $st, [string]$statusText) {
@@ -226,20 +247,53 @@ function Measure-Popup([double]$scale, $st, [string]$statusText) {
 }
 
 # ---------------------------------------------------------------- tray icon drawing
-function New-IconBitmap($pct, $tone, [bool]$err) {
+# The Claude logo is read at runtime from the installed Claude Desktop app (never copied into the repo).
+$script:ClaudeBase = $null
+$script:ClaudeBaseTried = $false
+function Find-ClaudeExe {
+  try {
+    $p = Get-AppxPackage -Name Claude -ErrorAction Stop | Select-Object -First 1
+    if ($p) { $e = Join-Path $p.InstallLocation 'app\claude.exe'; if (Test-Path $e) { return $e } }
+  } catch { }
+  try {
+    $pr = Get-Process -Name claude -ErrorAction SilentlyContinue | Where-Object { $_.Path } | Select-Object -First 1
+    if ($pr) { return $pr.Path }
+  } catch { }
+  return $null
+}
+function Get-ClaudeBase {   # cached 32x32 ARGB bitmap of the Claude icon, or $null
+  if ($script:ClaudeBaseTried) { return $script:ClaudeBase }
+  $script:ClaudeBaseTried = $true
+  try {
+    $exe = Find-ClaudeExe
+    if ($exe) {
+      $ic = [System.Drawing.Icon]::ExtractAssociatedIcon($exe)
+      if ($ic) {
+        $b = $ic.ToBitmap()
+        $script:ClaudeBase = New-Object System.Drawing.Bitmap($b)
+        $b.Dispose(); $ic.Dispose()
+      }
+    }
+  } catch { $script:ClaudeBase = $null }
+  return $script:ClaudeBase
+}
+function Get-TraySize {
+  $s = 16
+  try { $s = [System.Windows.Forms.SystemInformation]::SmallIconSize.Width } catch { }
+  if ($s -lt 16) { $s = 16 }
+  return $s
+}
+
+function New-DrawnIconBitmap($pct, $tone, [bool]$err) {   # fallback when the Claude icon is unavailable
   $bmp = New-Object System.Drawing.Bitmap(32, 32, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
   $g = [System.Drawing.Graphics]::FromImage($bmp)
   $g.SmoothingMode = 'AntiAlias'; $g.TextRenderingHint = 'AntiAliasGridFit'
   $g.Clear([System.Drawing.Color]::Transparent)
-  $path = New-Object System.Drawing.Drawing2D.GraphicsPath
-  $r = 7; $d = $r * 2
-  $path.AddArc(0, 0, $d, $d, 180, 90); $path.AddArc(31 - $d, 0, $d, $d, 270, 90)
-  $path.AddArc(31 - $d, 31 - $d, $d, $d, 0, 90); $path.AddArc(0, 31 - $d, $d, $d, 90, 90); $path.CloseFigure()
+  $path = New-RoundPath 0 0 31 31 7
   $bg = New-Object System.Drawing.SolidBrush($script:cBg); $g.FillPath($bg, $path)
   $grey = Hex '#8a8884'
   $ringRect = New-Object System.Drawing.RectangleF(3.5, 3.5, 25, 25)
-  $trackCol = Mix $script:cFg $script:cBg 0.22
-  $trackPen = New-Object System.Drawing.Pen($trackCol, 3.5)
+  $trackPen = New-Object System.Drawing.Pen((Mix $script:cFg $script:cBg 0.22), 3.5)
   $g.DrawEllipse($trackPen, $ringRect)
   $label = ''
   if ($err) {
@@ -262,8 +316,37 @@ function New-IconBitmap($pct, $tone, [bool]$err) {
   $wb.Dispose(); $sf.Dispose(); $font.Dispose(); $trackPen.Dispose(); $bg.Dispose(); $path.Dispose(); $g.Dispose()
   return $bmp
 }
-function New-TrayIcon($pct, $tone, [bool]$err) {
-  $bmp = New-IconBitmap $pct $tone $err
+function New-IconBitmap($pct, $tone, [bool]$err, [int]$size) {
+  $base = Get-ClaudeBase
+  if ($null -eq $base) { return (New-DrawnIconBitmap $pct $tone $err) }
+  $bmp = New-Object System.Drawing.Bitmap($size, $size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+  $g = [System.Drawing.Graphics]::FromImage($bmp)
+  $g.Clear([System.Drawing.Color]::Transparent)
+  $g.InterpolationMode = 'HighQualityBicubic'; $g.PixelOffsetMode = 'HighQuality'; $g.SmoothingMode = 'AntiAlias'
+  $g.DrawImage($base, (New-Object System.Drawing.Rectangle(0, 0, $size, $size)))
+  $d = [int][Math]::Round($size * 0.375)
+  $x = $size - $d; $y = $size - $d
+  if ($err) { $fill = $script:cBad }
+  elseif ($null -eq $pct) { $fill = Hex '#8a8884' }
+  else { $fill = ToneColor $tone }
+  $ob = New-Object System.Drawing.SolidBrush($script:cBg)
+  $g.FillEllipse($ob, [single]($x - 1), [single]($y - 1), [single]($d + 1), [single]($d + 1)); $ob.Dispose()   # dark 1px outline
+  $fb = New-Object System.Drawing.SolidBrush($fill)
+  $g.FillEllipse($fb, [single]$x, [single]$y, [single]($d - 1), [single]($d - 1)); $fb.Dispose()
+  if ($err) {
+    $g.TextRenderingHint = 'AntiAliasGridFit'
+    $font = New-Object System.Drawing.Font('Segoe UI', [single]([Math]::Max(5, $d * 0.95)), [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+    $sf = New-Object System.Drawing.StringFormat; $sf.Alignment = 'Center'; $sf.LineAlignment = 'Center'
+    $wb = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
+    $g.DrawString('!', $font, $wb, (New-Object System.Drawing.RectangleF([single]$x, [single]($y + 0.5), [single]($d - 1), [single]($d - 1))), $sf)
+    $wb.Dispose(); $sf.Dispose(); $font.Dispose()
+  }
+  $g.Dispose()
+  return $bmp
+}
+function New-TrayIcon($pct, $tone, [bool]$err, [int]$size = 0) {
+  if ($size -le 0) { $size = Get-TraySize }
+  $bmp = New-IconBitmap $pct $tone $err $size
   $h = $bmp.GetHicon()
   $tmp = [System.Drawing.Icon]::FromHandle($h)
   $icon = [System.Drawing.Icon]$tmp.Clone()
@@ -272,7 +355,6 @@ function New-TrayIcon($pct, $tone, [bool]$err) {
   $bmp.Dispose()
   return $icon
 }
-
 # ---------------------------------------------------------------- self test
 if ($SelfTest) {
   $now = [datetimeoffset]::UtcNow
@@ -294,18 +376,27 @@ if ($SelfTest) {
   $dir = $PSScriptRoot
   $tmpG = [System.Drawing.Graphics]::FromHwnd([IntPtr]::Zero); $dpi = $tmpG.DpiX; $tmpG.Dispose()
   $s = $dpi / 96.0
+  if ($TestScale -gt 0) { $s = $TestScale }
+  $suffix = ''; if ($TestScale -gt 0) { $suffix = '-' + $TestScale }
+  $fake | Add-Member -NotePropertyName modelsEstimated -NotePropertyValue $true
   $h = Measure-Popup $s $fake ''
   $bmp = New-Object System.Drawing.Bitmap([int](PxS $script:W), $h)
   $g = [System.Drawing.Graphics]::FromImage($bmp)
   [void](Draw-Popup $g $s $fake ''); $g.Dispose()
-  $bmp.Save((Join-Path $dir 'selftest.png'), [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
-  # icon strip: 42 ok, 87 warn, 100 bad, null, error  (64x64 each, 5 across)
-  $strip = New-Object System.Drawing.Bitmap(320, 64)
-  $sg = [System.Drawing.Graphics]::FromImage($strip); $sg.Clear((Hex '#444444')); $sg.InterpolationMode = 'HighQualityBicubic'
-  $i = 0
-  foreach ($ic1 in @(@(42, 'ok', $false), @(87, 'warn', $false), @(100, 'bad', $false), @($null, 'ok', $false), @($null, 'ok', $true))) {
-    $ic = New-TrayIcon $ic1[0] $ic1[1] $ic1[2]
-    $b = $ic.ToBitmap(); $sg.DrawImage($b, ($i * 64), 0, 64, 64); $b.Dispose(); $ic.Dispose(); $i++
+  $bmp.Save((Join-Path $dir ('selftest' + $suffix + '.png')), [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
+  # icon strip: rows = tray sizes 16/20/24/32 (drawn 4x), columns = 42 ok, 87 warn, 100 bad, no data, error
+  $sizes = @(16, 20, 24, 32)
+  $strip = New-Object System.Drawing.Bitmap(680, 544)
+  $sg = [System.Drawing.Graphics]::FromImage($strip); $sg.Clear((Hex '#444444'))
+  $sg.InterpolationMode = 'NearestNeighbor'; $sg.PixelOffsetMode = 'Half'
+  $r = 0
+  foreach ($sz in $sizes) {
+    $i = 0
+    foreach ($ic1 in @(@(42, 'ok', $false), @(87, 'warn', $false), @(100, 'bad', $false), @($null, 'ok', $false), @($null, 'ok', $true))) {
+      $b = New-IconBitmap $ic1[0] $ic1[1] $ic1[2] $sz
+      $sg.DrawImage($b, ($i * 136 + 4), ($r * 136 + 4), 128, 128); $b.Dispose(); $i++
+    }
+    $r++
   }
   $sg.Dispose(); $strip.Save((Join-Path $dir 'selftest-icon.png'), [System.Drawing.Imaging.ImageFormat]::Png); $strip.Dispose()
   Write-Output "selftest ok (dpi $dpi, popup height $h)"
@@ -440,6 +531,7 @@ $script:Popup.FormBorderStyle = 'None'; $script:Popup.ShowInTaskbar = $false; $s
 $script:Popup.StartPosition = 'Manual'; $script:Popup.BackColor = $script:cBg
 $script:Popup.GetType().GetProperty('DoubleBuffered', [System.Reflection.BindingFlags]'Instance,NonPublic').SetValue($script:Popup, $true, $null)
 $script:LastHide = [datetime]::MinValue
+$script:RegionKey = ''
 
 function Resize-Popup {
   $g = $script:Popup.CreateGraphics(); $s = $g.DpiX / 96.0; $g.Dispose()
@@ -447,6 +539,13 @@ function Resize-Popup {
   $w = [int][Math]::Round($script:W * $s)
   if ($script:Popup.ClientSize.Width -ne $w -or $script:Popup.ClientSize.Height -ne $h) {
     $script:Popup.ClientSize = New-Object System.Drawing.Size($w, $h)
+  }
+  if ($script:RegionKey -ne "$w x $h") {
+    $script:RegionKey = "$w x $h"
+    $rp = New-RoundPath 0 0 $w $h ([Math]::Round(10 * $s))
+    $oldRegion = $script:Popup.Region
+    $script:Popup.Region = New-Object System.Drawing.Region($rp)
+    $rp.Dispose(); if ($null -ne $oldRegion) { $oldRegion.Dispose() }
   }
   $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
   $m = [int][Math]::Round(8 * $s)

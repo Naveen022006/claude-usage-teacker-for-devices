@@ -18,6 +18,9 @@ import {
   pickWindow,
   themeFromColor,
   formatPct,
+  freeLimitText,
+  freeLimitView,
+  PLAN_NAMES,
   formatTokens,
   humanizeWindow,
   mergeDevices,
@@ -492,7 +495,7 @@ class Widget {
   private renderSidebar(s: WidgetState): HTMLElement {
     const open = !this.prefs.panelCollapsed;
     const box = h("section", { class: `sb${open ? " open" : ""}`, "aria-label": "Claude usage" });
-    const toggle = h("button", { class: "sb-toggle", type: "button", "aria-expanded": String(open), "data-fk": "sb-toggle", title: open ? "Collapse" : "Expand" }, "Usage");
+    const toggle = h("button", { class: "sb-toggle", type: "button", "aria-expanded": String(open), "data-fk": "sb-toggle", title: open ? "Collapse" : "Expand" }, "Usage", s.plan ? h("span", { class: "sb-plan" }, ` · ${PLAN_NAMES[s.plan] ?? s.plan}`) : null);
     toggle.addEventListener("click", () => {
       this.prefs.panelCollapsed = !this.prefs.panelCollapsed;
       this.savePrefs();
@@ -525,7 +528,7 @@ class Widget {
 
   private sbPlanRows(s: WidgetState, open: boolean): HTMLElement[] {
     const ws = sortWindows(s.accountUsage?.windows ?? []);
-    if (!ws.length) return [h("div", { class: "sb-none" }, "Plan usage unavailable")];
+    if (!ws.length) return this.sbFreeRows(s, open);
     const known = ws.filter((w) => PLAN_LABELS[w.name]);
     const list = known.length ? known : ws.slice(0, 1);
     const shown = open ? list : list.slice(0, 1);
@@ -533,6 +536,27 @@ class Widget {
       const pct = clampPct(w.utilization);
       return this.sbRow(PLAN_LABELS[w.name] ?? `${humanizeWindow(w.name)}:`, pct, sbTone(pct), this.sbCountdown(w.resetsAt), open);
     });
+  }
+
+  /** No account usage endpoint (Free): fall back to the message_limit hint seen in completion streams. */
+  private sbFreeRows(s: WidgetState, open: boolean): HTMLElement[] {
+    const v = freeLimitView(s.limitHint, Date.now());
+    const wins = v.windows.filter((w) => w.pct !== null);
+    if (wins.length) {
+      return (open ? wins : wins.slice(0, 1)).map((w) => {
+        const pct = w.pct ?? 0;
+        const label = w.name === "5h" ? PLAN_LABELS.five_hour : w.name === "7d" ? PLAN_LABELS.seven_day : `${w.name}:`;
+        return this.sbRow(label, pct, sbTone(pct), this.sbCountdown(w.resetsAt ?? undefined), open);
+      });
+    }
+    if (v.status) {
+      const t = v.status === "exceeded" ? "bad" : v.status === "approaching" ? "warn" : "ok";
+      const text = freeLimitText(v);
+      const row = h("div", { class: "sb-row txt" }, h("span", { class: "sb-lbl" }, "Free limit:"), h("span", { class: `sb-pct t-${t}`, title: text }, text), h("span", { class: "sb-right" }, this.sbCountdown(v.resetsAt ?? undefined)));
+      return [h("div", { class: "sb-item" }, row, open && v.status === "exceeded" ? this.sbBar(100, "bad", "Free limit") : null)];
+    }
+    if (s.plan === "free") return [h("div", { class: "sb-none" }, "Send a message to see your Free plan limit status")];
+    return [h("div", { class: "sb-none" }, "Plan usage unavailable")];
   }
 
   private sbOptionsLink(): HTMLElement {

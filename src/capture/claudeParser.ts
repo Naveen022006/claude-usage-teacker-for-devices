@@ -1,6 +1,7 @@
 // Maps claude.ai completion SSE events to a CapturedEvent. Stores lengths only, never text.
 // Undocumented API: every path is defensive and must never throw.
 
+import { HINT_MAX_DEPTH, HINT_MAX_KEYS, HINT_MAX_KEY_LEN, HINT_MAX_STR } from "../shared/types";
 import type { CapturedEvent, EventKind, LimitHint } from "../shared/types";
 import type { SseEvent } from "./sse";
 
@@ -115,7 +116,6 @@ export interface ClaudeStreamParser {
   readonly stats: { total: number; recognized: number; types: string[] };
 }
 
-const MAX_STR = 64;
 /** Event names that mean "this is a reply stream" (ping alone does not count). */
 const KNOWN = new Set([
   "message_start", "content_block_start", "content_block_delta", "content_block_stop",
@@ -126,17 +126,27 @@ function isObj(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 
+/** Dotted-key flatten of nested objects (max HINT_MAX_DEPTH levels below the root). Arrays/nulls/long strings are dropped. */
 function flatten(o: Record<string, unknown>): LimitHint["fields"] {
   const fields: LimitHint["fields"] = {};
+  let count = 0;
   const put = (k: string, v: unknown) => {
+    if (count >= HINT_MAX_KEYS || k.length > HINT_MAX_KEY_LEN) return;
     if (typeof v === "number" && Number.isFinite(v)) fields[k] = v;
     else if (typeof v === "boolean") fields[k] = v;
-    else if (typeof v === "string" && v.length <= MAX_STR) fields[k] = v;
+    else if (typeof v === "string" && v.length <= HINT_MAX_STR) fields[k] = v;
+    else return;
+    count++;
   };
-  for (const [k, v] of Object.entries(o)) {
-    if (isObj(v)) for (const [k2, v2] of Object.entries(v)) put(`${k}.${k2}`, v2);
-    else put(k, v);
-  }
+  const walk = (obj: Record<string, unknown>, prefix: string, depth: number) => {
+    for (const [k, v] of Object.entries(obj)) {
+      const key = prefix ? `${prefix}.${k}` : k;
+      if (isObj(v)) {
+        if (depth < HINT_MAX_DEPTH) walk(v, key, depth + 1);
+      } else put(key, v);
+    }
+  };
+  walk(o, "", 0);
   return fields;
 }
 

@@ -13,6 +13,7 @@ import type {
   CapturedEvent,
   DeviceInfo,
   LimitHint,
+  Plan,
   Settings,
   SyncState,
 } from "./types";
@@ -62,6 +63,10 @@ export interface WidgetState {
   device: DeviceInfo;
   aggregates: Aggregates;
   accountUsage: AccountUsage | null;
+  /** Subscription plan once learned (null = unknown). */
+  plan: Plan | null;
+  /** Latest message_limit hint seen in a completion stream (Free accounts have no usage endpoint). */
+  limitHint: LimitHint | null;
   syncState: SyncState;
   showWidget: boolean;
   codeDeviceIds: string[];

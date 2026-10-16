@@ -51,7 +51,16 @@ export interface AccountUsage {
   windows: AccountWindow[];
 }
 
-/** Rate-limit info seen inside a completion stream (shape undocumented → flat primitives only). */
+/** Claude subscription plan, derived from /api/organizations capabilities. */
+export type Plan = "free" | "pro" | "max" | "team";
+
+/** Caps for LimitHint.fields (shared by the parser and the SW-side validator). */
+export const HINT_MAX_KEYS = 48;
+export const HINT_MAX_KEY_LEN = 80;
+export const HINT_MAX_STR = 64;
+export const HINT_MAX_DEPTH = 3;
+
+/** Rate-limit info seen inside a completion stream (shape undocumented → dotted keys, primitives only, up to 3 levels deep). */
 export interface LimitHint {
   ts: number;
   fields: Record<string, string | number | boolean>;
@@ -118,6 +127,7 @@ export interface StorageShape {
   accountUsage: AccountUsage | null;
   limitHint: LimitHint | null;
   orgId: string | null; // learned from captured completion URLs
+  plan: Plan | null; // learned from /api/organizations
   settings: Settings;
   syncState: SyncState;
   captureDiag: CaptureDiag | null;

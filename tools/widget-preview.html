@@ -9,6 +9,8 @@
     ?empty=1                   chat empty state (no usage in window) with the capture status line
     ?pinned=1                  code mode with a Pinned section
     ?extra=1                   also show Weekly Opus / Weekly Sonnet (high-usage colours)
+    ?plan=free|pro|max|team    plan badge; plan=free drops the account usage windows (Free has no usage endpoint)
+    ?hint=within|approaching|exceeded|windows   message_limit hint mock (use with plan=free)
 -->
 <style>
   :root { --bg:#1f1e1d; --fg:#e8e6e3; --hover:#2b2a28; --muted:#9a968f; --line:#33312f; }
@@ -85,6 +87,19 @@
         { deviceId: "cc", deviceName: "work-laptop", source: "claude-code", estimated: false, receivedAt: now - min, fresh: true, windows: windows(3) },
         { deviceId: "dk", deviceName: "home-pc", source: "desktop", estimated: false, receivedAt: now - 120 * min, fresh: false, windows: windows(0.5) } ] }
     };
+    var plan = q.get("plan"), hint = q.get("hint");
+    if (plan) state.plan = plan;
+    if (plan === "free") state.accountUsage = null;
+    if (hint) {
+      var sec = function (ms) { return Math.floor((now + ms) / 1000); }, f = {};
+      if (hint === "within") f = { type: "message_limit", "message_limit.type": "within_limit" };
+      else if (hint === "approaching") f = { type: "message_limit", "message_limit.type": "approaching_limit", "message_limit.remaining": 3, "message_limit.resetsAt": sec(2 * 3600000 + 14 * min) };
+      else if (hint === "exceeded") f = { type: "message_limit", "message_limit.type": "exceeded_limit", "message_limit.resetsAt": sec(3 * 3600000 + 20 * min) };
+      else if (hint === "windows") f = { type: "message_limit", "message_limit.type": "within_limit",
+        "message_limit.windows.5h.utilization": 0.42, "message_limit.windows.5h.status": "within_limit", "message_limit.windows.5h.resets_at": sec(3 * 3600000 + 20 * min),
+        "message_limit.windows.7d.utilization": 0.86, "message_limit.windows.7d.status": "approaching_limit", "message_limit.windows.7d.resets_at": sec(4 * 86400000) };
+      state.limitHint = { ts: now - 5000, fields: f };
+    }
     if (q.get("empty") === "1") state.aggregates = { today: mk([0,0],[0,0],[0,0]), last5h: mk([0,0],[0,0],[0,0]), last7d: mk([0,0],[0,0],[0,0]) };
     var store = {};
     window.chrome = {

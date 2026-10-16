@@ -6,6 +6,7 @@ const DEFAULTS: { [K in Defaulted]: StorageShape[K] } = {
   accountUsage: null,
   limitHint: null,
   orgId: null,
+  plan: null,
   settings: DEFAULT_SETTINGS,
   syncState: DEFAULT_SYNC_STATE,
   captureDiag: null,

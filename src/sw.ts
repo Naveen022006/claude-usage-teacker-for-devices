@@ -14,7 +14,7 @@ import {
   type WidgetState,
 } from "./shared/messages";
 import { DEFAULT_SW_DIAG, DEFAULT_SYNC_STATE, type SwDiag, type Settings, type SyncState, type UsageEvent } from "./shared/types";
-import { pickOrg } from "./shared/org";
+import { pickOrg, planOfOrgs } from "./shared/org";
 import { explainCapturedEventError, sanitizeDeviceIds, validatePageMessage, validateWidgetRequest } from "./shared/validate";
 import * as store from "./storage";
 import { fetchAccountUsage } from "./sync/accountUsage";
@@ -160,6 +160,7 @@ async function handlePage(m: PageMessage): Promise<void> {
       return;
     case "limit-hint":
       await store.set({ limitHint: m.payload });
+      void broadcastStateChanged();
       return;
   }
 }
@@ -220,7 +221,37 @@ function maybeRefreshUsageForWidget(settings: Settings, orgId: string | null, us
 }
 
 const ORG_DISCOVERY_MIN_GAP_MS = 10 * 60_000;
+const PLAN_REFRESH_MIN_GAP_MS = 6 * 3600_000;
 let lastOrgDiscovery = 0;
+let lastPlanAttempt = 0;
+
+/** Learns the subscription plan from an /api/organizations response. Never throws. */
+async function learnPlan(json: unknown, orgId: string | null): Promise<void> {
+  try {
+    const plan = planOfOrgs(json, orgId);
+    if (plan && plan !== (await store.get("plan"))) {
+      await store.set({ plan });
+      void broadcastStateChanged();
+    }
+  } catch (e) {
+    console.warn("[claude-usage] plan store failed", e);
+  }
+}
+
+/** Plan unknown: ask which plan the org has, at most once per 6 h. Never throws. */
+async function refreshPlan(orgId: string | null, hint: string | undefined): Promise<void> {
+  const now = Date.now();
+  if (now - lastPlanAttempt < PLAN_REFRESH_MIN_GAP_MS) return;
+  lastPlanAttempt = now;
+  try {
+    const res = await fetch("https://claude.ai/api/organizations", { credentials: "include" });
+    if (!res.ok) return;
+    const json = await res.json();
+    await learnPlan(json, orgId ?? pickOrg(json, hint));
+  } catch (e) {
+    console.warn("[claude-usage] plan refresh failed", e);
+  }
+}
 
 /** Fallback when no orgId is known: ask claude.ai which organizations the session belongs to. Never throws. */
 async function discoverOrgId(hint: string | undefined): Promise<string | null> {
@@ -233,7 +264,10 @@ async function discoverOrgId(hint: string | undefined): Promise<string | null> {
       console.warn("[claude-usage] org discovery failed: HTTP", res.status);
       return null;
     }
-    const id = pickOrg(await res.json(), hint);
+    const json = await res.json();
+    const id = pickOrg(json, hint);
+    lastPlanAttempt = now; // this response also tells us the plan
+    await learnPlan(json, id);
     if (!id) console.warn("[claude-usage] org discovery: no organization found");
     return id;
   } catch (e) {
@@ -248,7 +282,7 @@ async function handleWidget(type: "get-widget-state" | "open-options", orgHint?:
       await chrome.runtime.openOptionsPage();
       return { ok: true, data: null };
     }
-    const [device, settings, syncState, accountUsage, events, orgId, captureDiag, swDiag] = await Promise.all([
+    const [device, settings, syncState, accountUsage, events, orgId, captureDiag, swDiag, limitHint] = await Promise.all([
       store.ensureDevice(),
       store.get("settings"),
       store.get("syncState"),
@@ -257,6 +291,7 @@ async function handleWidget(type: "get-widget-state" | "open-options", orgHint?:
       store.get("orgId"),
       store.get("captureDiag"),
       store.get("swDiag"),
+      store.get("limitHint"),
     ]);
     let org = orgId;
     let learned = false;
@@ -272,11 +307,15 @@ async function handleWidget(type: "get-widget-state" | "open-options", orgHint?:
       lastWidgetUsageAttempt = 0; // allow an immediate usage fetch, which broadcasts state-changed
     }
     maybeRefreshUsageForWidget(settings, org, learned ? null : accountUsage);
+    const plan = await store.get("plan");
+    if (!plan) void refreshPlan(org, orgHint); // rate-limited to once per 6 h; broadcasts state-changed when learned
     const now = Date.now();
     const state: WidgetState = {
       device,
       aggregates: computeAggregates(events, now),
       accountUsage,
+      plan,
+      limitHint,
       syncState,
       showWidget: settings.showWidget,
       codeDeviceIds: sanitizeDeviceIds(settings.codeDeviceIds) ?? [],

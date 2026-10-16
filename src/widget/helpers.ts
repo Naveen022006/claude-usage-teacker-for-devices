@@ -283,3 +283,120 @@ export function themeFromColor(css: string): "dark" | "light" | null {
   const lum = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
   return lum > 0.4 ? "dark" : "light"; // light text => dark theme
 }
+
+// ---- Free-plan limit view (from the message_limit hint seen in completion streams) ----
+
+export type LimitStatus = "within" | "approaching" | "exceeded";
+export interface LimitWindowView {
+  name: string; // "5h" | "7d" | raw name
+  pct: number | null; // 0–100
+  resetsAt: string | null; // ISO
+}
+export interface FreeLimitView {
+  status: LimitStatus | null;
+  remaining: number | null;
+  resetsAt: string | null; // ISO
+  windows: LimitWindowView[];
+}
+
+export const HINT_MAX_AGE_MS = 6 * 3600_000;
+const EMPTY_VIEW = (): FreeLimitView => ({ status: null, remaining: null, resetsAt: null, windows: [] });
+
+/** Epoch seconds, epoch ms, numeric string or ISO string -> ISO string; null when unusable. */
+export function toIso(v: unknown): string | null {
+  let ms: number | null = null;
+  if (typeof v === "number" && Number.isFinite(v) && v > 0) ms = v < 1e11 ? v * 1000 : v;
+  else if (typeof v === "string" && v.trim()) {
+    const t = v.trim();
+    if (/^\d+(\.\d+)?$/.test(t)) {
+      const n = Number(t);
+      ms = n < 1e11 ? n * 1000 : n;
+    } else {
+      const p = Date.parse(t);
+      if (Number.isFinite(p)) ms = p;
+    }
+  }
+  if (ms === null || !Number.isFinite(ms) || ms > 8.64e15) return null;
+  return new Date(ms).toISOString();
+}
+
+function toStatus(v: unknown): LimitStatus | null {
+  if (typeof v !== "string") return null;
+  const s = v.toLowerCase();
+  if (/exceed|reached|blocked|reject|denied/.test(s)) return "exceeded";
+  if (/approach|warn|near/.test(s)) return "approaching";
+  if (/within|allowed|^ok$|normal|available/.test(s)) return "within";
+  return null;
+}
+
+/** 0–1 fractions and 0–100 percentages both -> 0–100 (a value <= 1 is a fraction). */
+function toPct(v: unknown): number | null {
+  if (typeof v === "string" && v.trim() !== "") v = Number(v);
+  if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return null;
+  return clampPct(v <= 1 ? v * 100 : v);
+}
+
+function windowName(raw: string): string {
+  const s = raw.toLowerCase().replace(/[\s-]/g, "_");
+  if (s === "5h" || s === "five_hour" || s === "5_hour" || s === "session") return "5h";
+  if (s === "7d" || s === "seven_day" || s === "7_day" || s === "weekly" || s === "week") return "7d";
+  return raw;
+}
+
+/**
+ * Normalises a LimitHint (dotted keys) for display. All fields optional; anything stale (older than 6 h, or whose
+ * reset time has passed) is dropped, so a fully stale hint yields an empty view.
+ */
+export function freeLimitView(hint: { ts: number; fields: Record<string, string | number | boolean> } | null | undefined, now: number): FreeLimitView {
+  if (!hint || !hint.fields || typeof hint.ts !== "number" || !(now - hint.ts < HINT_MAX_AGE_MS)) return EMPTY_VIEW();
+  const f = hint.fields;
+  const first = (...keys: string[]): unknown => {
+    for (const k of keys) if (k in f) return f[k];
+    return undefined;
+  };
+  const alive = (iso: string | null): boolean => iso === null || Date.parse(iso) > now;
+
+  const wins = new Map<string, { util?: unknown; status?: unknown; reset?: unknown }>();
+  for (const [k, v] of Object.entries(f)) {
+    const m = /(?:^|\.)windows\.([^.]+)\.(utilization|status|resets_?[aA]t)$/.exec(k);
+    if (!m) continue;
+    const w = wins.get(m[1]) ?? {};
+    if (m[2] === "utilization") w.util = v;
+    else if (m[2] === "status") w.status = v;
+    else w.reset = v;
+    wins.set(m[1], w);
+  }
+  const windows: LimitWindowView[] = [];
+  let worst: LimitStatus | null = null;
+  const rank: Record<LimitStatus, number> = { within: 0, approaching: 1, exceeded: 2 };
+  for (const [raw, w] of wins) {
+    const resetsAt = toIso(w.reset);
+    if (!alive(resetsAt)) continue;
+    const st = toStatus(w.status);
+    if (st && (!worst || rank[st] > rank[worst])) worst = st;
+    windows.push({ name: windowName(raw), pct: toPct(w.util), resetsAt });
+  }
+  const order = (n: string) => (n === "5h" ? 0 : n === "7d" ? 1 : 2);
+  windows.sort((a, b) => order(a.name) - order(b.name));
+
+  const resetsAt = toIso(first("message_limit.resetsAt", "message_limit.resets_at", "resetsAt", "resets_at"));
+  const view: FreeLimitView = { status: null, remaining: null, resetsAt, windows };
+  if (!alive(resetsAt)) {
+    view.resetsAt = null;
+    return view; // top-level limit already reset: status/remaining no longer apply
+  }
+  view.status = toStatus(first("message_limit.type", "message_limit.status", "status")) ?? worst;
+  const rem = first("message_limit.remaining", "remaining");
+  view.remaining = typeof rem === "number" && Number.isFinite(rem) && rem >= 0 ? Math.floor(rem) : null;
+  return view;
+}
+
+/** Row value text for the Free limit line. */
+export function freeLimitText(v: FreeLimitView): string {
+  if (v.status === "exceeded") return "Limit reached";
+  // Amber tone already says "approaching"; short text keeps the row on one line.
+  if (v.status === "approaching") return v.remaining !== null ? `${v.remaining} ${v.remaining === 1 ? "msg" : "msgs"} left` : "Approaching limit";
+  return "Within limit";
+}
+
+export const PLAN_NAMES: Record<string, string> = { free: "Free", pro: "Pro", max: "Max", team: "Team" };

@@ -22,6 +22,9 @@ export const SIDEBAR_CSS = `
 .sb-row { display: grid; grid-template-columns: minmax(0, 1fr) 3.3em auto; column-gap: 8px; align-items: baseline; }
 .sb-lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-pct { color: var(--blue); white-space: nowrap; }
+.sb-plan { font-size: 11.5px; opacity: .85; }
+.sb-row.txt { grid-template-columns: auto minmax(0, 1fr) auto; }
+.sb-row.txt .sb-pct { white-space: normal; text-align: right; line-height: 1.25; }
 .sb-pct.t-warn, .sb-fill.t-warn { --blue: var(--warn); }
 .sb-pct.t-bad, .sb-fill.t-bad { --blue: var(--bad); }
 .sb-right { justify-self: end; display: inline-flex; align-items: center; gap: 4px; color: var(--muted); white-space: nowrap; font-size: 12.5px; }

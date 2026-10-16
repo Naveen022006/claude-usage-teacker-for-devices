@@ -91,20 +91,44 @@ describe("claude stream parser", () => {
     expect(f["message_limit.type"]).toBe("within_limit");
     for (const [k, v] of Object.entries(f)) {
       expect(["string", "number", "boolean"]).toContain(typeof v);
-      expect(k.split(".").length).toBeLessThanOrEqual(2);
+      expect(k.split(".").length).toBeLessThanOrEqual(4);
       if (typeof v === "string") expect(v.length).toBeLessThanOrEqual(64);
     }
     expect("message_limit.resetsAt" in f).toBe(false); // nulls dropped
   });
 
-  it("drops long strings and deep objects in limit hints", () => {
+  it("flattens up to 3 levels deep, dropping long strings, arrays and deeper objects", () => {
     const hints: LimitHint[] = [];
     const p = createClaudeStreamParser(META, (h) => hints.push(h));
     p.onEvent({
       event: "message_limit",
-      data: JSON.stringify({ a: "x".repeat(65), b: 1, c: { d: true, e: { f: 1 }, g: "ok" } }),
+      data: JSON.stringify({
+        a: "x".repeat(65), b: 1, arr: [1], nul: null,
+        c: { d: true, e: { f: 1, g: { h: 2, i: { j: 3 } } }, k: "ok" },
+      }),
     });
-    expect(hints[0].fields).toEqual({ b: 1, "c.d": true, "c.g": "ok" });
+    expect(hints[0].fields).toEqual({ b: 1, "c.d": true, "c.e.f": 1, "c.e.g.h": 2, "c.k": "ok" });
+  });
+
+  it("captures message_limit windows", () => {
+    const hints: LimitHint[] = [];
+    const p = createClaudeStreamParser(META, (h) => hints.push(h));
+    p.onEvent({
+      event: "message_limit",
+      data: JSON.stringify({ type: "message_limit", message_limit: { type: "approaching_limit", windows: { "5h": { status: "within", resets_at: 1800000000, utilization: 0.42 } } } }),
+    });
+    expect(hints[0].fields["message_limit.windows.5h.utilization"]).toBe(0.42);
+    expect(hints[0].fields["message_limit.windows.5h.resets_at"]).toBe(1800000000);
+  });
+
+  it("caps hints at 48 keys and 80-char keys", () => {
+    const hints: LimitHint[] = [];
+    const p = createClaudeStreamParser(META, (h) => hints.push(h));
+    const o: Record<string, number> = { ["k".repeat(81)]: 1 };
+    for (let i = 0; i < 60; i++) o[`k${i}`] = i;
+    p.onEvent({ event: "message_limit", data: JSON.stringify(o) });
+    expect(Object.keys(hints[0].fields)).toHaveLength(48);
+    expect(Object.keys(hints[0].fields).every((k) => k.length <= 80)).toBe(true);
   });
 
   it("detects event type from data.type when no event: field is given", () => {

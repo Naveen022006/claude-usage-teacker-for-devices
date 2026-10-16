@@ -1,3 +1,5 @@
+import type { Plan } from "./types";
+
 // Pure helpers for discovering the active claude.ai organization (no chrome.* / DOM access).
 
 export const ORG_HINT_RE = /^[0-9a-f-]{36}$/i;
@@ -36,4 +38,24 @@ export function pickOrg(json: unknown, hint?: string | null): string | null {
     if (h) return h.uuid;
   }
   return (orgs.find((o) => o.chat) ?? orgs[0]).uuid;
+}
+
+/**
+ * Plan of the given org from a GET /api/organizations response (capabilities array):
+ * claude_max -> max, claude_pro -> pro, raven/enterprise/team -> team, otherwise free.
+ * null when the org (or its capabilities) cannot be found.
+ */
+export function planOfOrgs(json: unknown, orgId: string | null | undefined): Plan | null {
+  if (!Array.isArray(json)) return null;
+  const org = json.find(
+    (o): o is Record<string, unknown> =>
+      !!o && typeof o === "object" && typeof (o as Record<string, unknown>).uuid === "string" &&
+      (!orgId || ((o as Record<string, unknown>).uuid as string).toLowerCase() === orgId.toLowerCase()),
+  );
+  if (!org || !Array.isArray(org.capabilities)) return null;
+  const caps = org.capabilities.filter((c): c is string => typeof c === "string");
+  if (caps.includes("claude_max")) return "max";
+  if (caps.includes("claude_pro")) return "pro";
+  if (caps.some((c) => c === "raven" || c === "enterprise" || c === "team")) return "team";
+  return "free";
 }

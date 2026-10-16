@@ -16,7 +16,7 @@ English
 Usage Meter for Claude is an unofficial extension that puts your Claude usage where you can see it: right inside the claude.ai sidebar.
 
 Features
-- Plan limits at a glance: your 5-hour and weekly limit usage and reset times, read from your own claude.ai session.
+- Plan limits at a glance: your 5-hour and weekly limit usage and reset times, read from your own claude.ai session. On the Free plan, where those numbers are not offered, it shows the limit status claude.ai reports with each reply.
 - Per-model breakdown: see how much each model (for example Opus, Sonnet, Haiku) is being used on this device.
 - Works on claude.ai chat and claude.ai/code, with a compact panel that sits in the sidebar.
 - Toolbar popup with a quick summary and a "Sync now" button.

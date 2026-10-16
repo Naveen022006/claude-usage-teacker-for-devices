@@ -1,4 +1,4 @@
-import type { CaptureDiag, CapturedEvent, DiagObservation, LimitHint } from "./types";
+import { HINT_MAX_KEYS, HINT_MAX_KEY_LEN, HINT_MAX_STR, type CaptureDiag, type CapturedEvent, type DiagObservation, type LimitHint } from "./types";
 import { NS, type PageMessage, type WidgetRequest } from "./messages";
 
 const STATUSES = ["ok", "error", "aborted"];
@@ -65,15 +65,15 @@ export function validateDiag(x: unknown): CaptureDiag | null {
   return { updatedAt, hookInstalled, fetchCalls, streamsSeen, emptyStreams, eventsPosted, observations: obs };
 }
 
-function validateHint(x: unknown): LimitHint | null {
+export function validateHint(x: unknown): LimitHint | null {
   if (!isObj(x) || !num(x.ts) || !isObj(x.fields)) return null;
   const entries = Object.entries(x.fields);
-  if (entries.length > 32) return null;
+  if (entries.length > HINT_MAX_KEYS) return null;
   const fields: LimitHint["fields"] = {};
   for (const [k, v] of entries) {
-    if (k.length > 64) return null;
+    if (k.length > HINT_MAX_KEY_LEN) return null;
     if (typeof v === "string") {
-      if (v.length > 64) return null;
+      if (v.length > HINT_MAX_STR) return null;
     } else if (typeof v === "number") {
       if (!Number.isFinite(v)) return null;
     } else if (typeof v !== "boolean") return null;

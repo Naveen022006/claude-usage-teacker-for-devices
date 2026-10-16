@@ -62,8 +62,15 @@ describe("validatePageMessage", () => {
     });
     it("rejects long strings and too many keys", () => {
       expect(validatePageMessage(hint({ a: "x".repeat(65) }))).toBeNull();
-      const many = Object.fromEntries(Array.from({ length: 33 }, (_, i) => [`k${i}`, i]));
+      const many = Object.fromEntries(Array.from({ length: 49 }, (_, i) => [`k${i}`, i]));
       expect(validatePageMessage(hint(many))).toBeNull();
+    });
+    it("accepts 48 keys, dotted keys up to 80 chars; rejects longer keys and NaN/Infinity", () => {
+      const ok = Object.fromEntries(Array.from({ length: 48 }, (_, i) => [`message_limit.windows.5h.k${i}`, i]));
+      expect(validatePageMessage(hint(ok))).not.toBeNull();
+      expect(validatePageMessage(hint({ ["a".repeat(80)]: 1 }))).not.toBeNull();
+      expect(validatePageMessage(hint({ ["a".repeat(81)]: 1 }))).toBeNull();
+      expect(validatePageMessage(hint({ a: Infinity }))).toBeNull();
     });
   });
 });

@@ -13,7 +13,7 @@ import {
   type UiState,
   type WidgetState,
 } from "./shared/messages";
-import { DEFAULT_SW_DIAG, DEFAULT_SYNC_STATE, type SwDiag, type Settings, type SyncState, type UsageEvent } from "./shared/types";
+import { DEFAULT_SW_DIAG, DEFAULT_SYNC_STATE, type SwDiag, type UsageDiag, type Settings, type SyncState, type UsageEvent } from "./shared/types";
 import { pickOrg, planOfOrgs } from "./shared/org";
 import { explainCapturedEventError, sanitizeDeviceIds, validatePageMessage, validateWidgetRequest } from "./shared/validate";
 import * as store from "./storage";
@@ -48,6 +48,10 @@ async function heartbeat(): Promise<void> {
   await syncNow();
 }
 
+const recordUsageDiag = (d: UsageDiag): void => {
+  void store.set({ usageDiag: d }).catch(() => {});
+};
+
 async function pollAccountUsage(): Promise<void> {
   const [settings, orgId, current] = await Promise.all([
     store.get("settings"),
@@ -60,7 +64,7 @@ async function pollAccountUsage(): Promise<void> {
   const tabs = await chrome.tabs.query({ url: "https://claude.ai/*" });
   if (!tabs.length) return;
   lastUsageAttempt = now;
-  const usage = await fetchAccountUsage(orgId);
+  const usage = await fetchAccountUsage(orgId, recordUsageDiag);
   if (usage) await store.set({ accountUsage: usage });
 }
 
@@ -210,7 +214,7 @@ function maybeRefreshUsageForWidget(settings: Settings, orgId: string | null, us
   if (now - (usage?.fetchedAt ?? 0) < WIDGET_USAGE_STALE_MS) return;
   if (now - lastWidgetUsageAttempt < WIDGET_USAGE_MIN_GAP_MS) return;
   lastUsageAttempt = lastWidgetUsageAttempt = now;
-  void fetchAccountUsage(orgId)
+  void fetchAccountUsage(orgId, recordUsageDiag)
     .then(async (u) => {
       if (u) {
         await store.set({ accountUsage: u });
@@ -450,11 +454,11 @@ async function handleUi(req: UiRequest): Promise<UiResponse> {
         return ok<"sync-now">(await syncNow());
       }
       case "get-diag":
-        return ok<"get-diag">({ page: await store.get("captureDiag"), sw: await store.get("swDiag") });
+        return ok<"get-diag">({ page: await store.get("captureDiag"), sw: await store.get("swDiag"), usage: await store.get("usageDiag") });
       case "reset-diag":
         await swDiagChain;
-        await store.set({ captureDiag: null, swDiag: { ...DEFAULT_SW_DIAG } });
-        return ok<"reset-diag">({ page: null, sw: { ...DEFAULT_SW_DIAG } });
+        await store.set({ captureDiag: null, swDiag: { ...DEFAULT_SW_DIAG }, usageDiag: null });
+        return ok<"reset-diag">({ page: null, sw: { ...DEFAULT_SW_DIAG }, usage: null });
       case "export-data": {
         const [device, settings, events, accountUsage] = await Promise.all([
           store.ensureDevice(),

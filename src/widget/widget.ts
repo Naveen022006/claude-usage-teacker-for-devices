@@ -18,8 +18,8 @@ import {
   pickWindow,
   themeFromColor,
   formatPct,
-  freeLimitText,
-  freeLimitView,
+  planRows,
+  modelRowView,
   PLAN_NAMES,
   formatTokens,
   humanizeWindow,
@@ -528,7 +528,8 @@ class Widget {
 
   private sbPlanRows(s: WidgetState, open: boolean): HTMLElement[] {
     const ws = sortWindows(s.accountUsage?.windows ?? []);
-    if (!ws.length) return this.sbFreeRows(s, open);
+    if (s.plan === "free" || (!s.plan && !ws.length)) return this.sbFreeRows(s, open);
+    if (!ws.length) return [h("div", { class: "sb-none" }, "Plan usage unavailable")];
     const known = ws.filter((w) => PLAN_LABELS[w.name]);
     const list = known.length ? known : ws.slice(0, 1);
     const shown = open ? list : list.slice(0, 1);
@@ -538,25 +539,19 @@ class Widget {
     });
   }
 
-  /** No account usage endpoint (Free): fall back to the message_limit hint seen in completion streams. */
+  /** Free (or unknown plan, no account usage): always Session + Weekly rows; account usage -> limit hint -> "—". */
   private sbFreeRows(s: WidgetState, open: boolean): HTMLElement[] {
-    const v = freeLimitView(s.limitHint, Date.now());
-    const wins = v.windows.filter((w) => w.pct !== null);
-    if (wins.length) {
-      return (open ? wins : wins.slice(0, 1)).map((w) => {
-        const pct = w.pct ?? 0;
-        const label = w.name === "5h" ? PLAN_LABELS.five_hour : w.name === "7d" ? PLAN_LABELS.seven_day : `${w.name}:`;
-        return this.sbRow(label, pct, sbTone(pct), this.sbCountdown(w.resetsAt ?? undefined), open);
-      });
-    }
-    if (v.status) {
-      const t = v.status === "exceeded" ? "bad" : v.status === "approaching" ? "warn" : "ok";
-      const text = freeLimitText(v);
-      const row = h("div", { class: "sb-row txt" }, h("span", { class: "sb-lbl" }, "Free limit:"), h("span", { class: `sb-pct t-${t}`, title: text }, text), h("span", { class: "sb-right" }, this.sbCountdown(v.resetsAt ?? undefined)));
-      return [h("div", { class: "sb-item" }, row, open && v.status === "exceeded" ? this.sbBar(100, "bad", "Free limit") : null)];
-    }
-    if (s.plan === "free") return [h("div", { class: "sb-none" }, "Send a message to see your Free plan limit status")];
-    return [h("div", { class: "sb-none" }, "Plan usage unavailable")];
+    const v = planRows(s.accountUsage, s.limitHint, s.plan, Date.now());
+    const out = (open ? v.rows : v.rows.slice(0, 1)).map((r) => {
+      if (r.kind === "pct") return this.sbRow(r.label, r.pct, r.tone, this.sbCountdown(r.resetsAt ?? undefined), open);
+      const none = r.kind === "none";
+      const val = h("span", { class: none ? "sb-pct none" : `sb-pct t-${r.tone}`, title: r.text }, r.text);
+      const row = h("div", { class: none ? "sb-row" : "sb-row txt" }, h("span", { class: "sb-lbl", title: r.label }, r.label), val, none ? h("span") : h("span", { class: "sb-right" }, this.sbCountdown(r.resetsAt ?? undefined)));
+      const barPct = r.kind === "text" && r.tone === "bad" ? 100 : 0;
+      return h("div", { class: "sb-item" }, row, open ? this.sbBar(barPct, r.tone, r.label.replace(/:$/, "")) : null);
+    });
+    if (open && v.hint) out.push(h("div", { class: "sb-diag" }, v.hint));
+    return out;
   }
 
   private sbOptionsLink(): HTMLElement {
@@ -611,7 +606,10 @@ class Widget {
       return out;
     }
     for (const m of shares.slice(0, MAX_MODEL_ROWS)) {
-      out.push(this.sbRow(`${m.label}:`, m.pct, "ok", h("span", { class: "tk" }, `${estimated ? "≈" : ""}${formatTokens(m.tokens)} tok`)));
+      const v = modelRowView(m, estimated, this.mode === "chat" ? "this device's" : "these devices'");
+      const row = h("div", { class: "sb-row mdl" }, h("span", { class: "sb-lbl", title: v.label }, v.label), h("span", { class: "sb-mid" }, v.mid), h("span", { class: "sb-right" }, h("span", { class: "tk" }, v.right)));
+      const bar = h("div", { class: "sb-bar", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(v.share), "aria-label": v.label.replace(/:$/, "") }, h("div", { class: "sb-fill neutral", style: `width:${v.share}%` }));
+      out.push(h("div", { class: "sb-item", title: v.title }, row, bar));
     }
     if (shares.length > MAX_MODEL_ROWS) out.push(h("div", { class: "sb-none" }, `+${shares.length - MAX_MODEL_ROWS} more`));
     return out;

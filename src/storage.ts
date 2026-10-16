@@ -11,6 +11,7 @@ const DEFAULTS: { [K in Defaulted]: StorageShape[K] } = {
   syncState: DEFAULT_SYNC_STATE,
   captureDiag: null,
   swDiag: DEFAULT_SW_DIAG,
+  usageDiag: null,
 };
 
 /** Pre-pivot settings used deskbuddyUrl / sharedToken. Rename once, drop the old LAN default. */

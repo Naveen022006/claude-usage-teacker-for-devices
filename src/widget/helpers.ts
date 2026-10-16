@@ -400,3 +400,73 @@ export function freeLimitText(v: FreeLimitView): string {
 }
 
 export const PLAN_NAMES: Record<string, string> = { free: "Free", pro: "Pro", max: "Max", team: "Team" };
+
+// ---- model rows (neutral: counts + tokens, never the blue limit %) ----
+
+export interface ModelRowView {
+  label: string; // "Sonnet 5.5:"
+  mid: string; // "14 msgs"
+  right: string; // "≈6.1k tok"
+  title: string; // tooltip
+  share: number; // 0–100 bar width (share of tokens)
+}
+
+export function modelRowView(m: ModelShare, estimated: boolean, scope = "this device's"): ModelRowView {
+  const msgs = `${m.messages} ${m.messages === 1 ? "msg" : "msgs"}`;
+  const tok = `${estimated ? "≈" : ""}${formatTokens(m.tokens)} tok`;
+  const of = m.tokens > 0 ? "tokens" : "messages";
+  return { label: `${m.label}:`, mid: msgs, right: tok, title: `${m.label} · ${m.pct}% of ${scope} ${of} · ${msgs} · ${tok}`, share: m.pct };
+}
+
+// ---- plan rows (Session / Weekly), shared by Free and Pro/Max-style layout ----
+
+export interface PlanRow {
+  key: "five_hour" | "seven_day";
+  label: string;
+  kind: "pct" | "text" | "none";
+  pct: number; // kind "pct"
+  text: string; // kind "text" ("—" for none)
+  tone: Tone;
+  resetsAt: string | null;
+}
+export interface PlanRowsView {
+  rows: PlanRow[];
+  hint: string | null;
+}
+
+export const PLAN_ROW_LABELS = { five_hour: "Session (5h):", seven_day: "Weekly:" } as const;
+
+/** Free-plan (or unknown plan without account usage) Session + Weekly rows. Order: account usage -> limit hint -> "—". */
+export function planRows(
+  acct: { windows: AccountWindow[] } | null | undefined,
+  hint: { ts: number; fields: Record<string, string | number | boolean> } | null | undefined,
+  _plan: string | null | undefined,
+  now: number,
+): PlanRowsView {
+  const v = freeLimitView(hint, now);
+  const keys = ["five_hour", "seven_day"] as const;
+  const hintName = { five_hour: "5h", seven_day: "7d" } as const;
+  const rows: PlanRow[] = keys.map((key) => {
+    const base = { key, label: PLAN_ROW_LABELS[key], pct: 0, text: "—", tone: "ok" as Tone, resetsAt: null as string | null };
+    const a = acct?.windows?.find((w) => w.name === key);
+    if (a && Number.isFinite(a.utilization)) {
+      const pct = clampPct(a.utilization);
+      return { ...base, kind: "pct", pct, tone: sbTone(pct), resetsAt: a.resetsAt ?? null };
+    }
+    const hw = v.windows.find((w) => w.name === hintName[key] && w.pct !== null);
+    if (hw) {
+      const pct = clampPct(hw.pct ?? 0);
+      return { ...base, kind: "pct", pct, tone: sbTone(pct), resetsAt: hw.resetsAt };
+    }
+    return { ...base, kind: "none" };
+  });
+  const session = rows[0];
+  if (session.kind === "none" && v.status) {
+    session.kind = "text";
+    session.text = freeLimitText(v);
+    session.tone = v.status === "exceeded" ? "bad" : v.status === "approaching" ? "warn" : "ok";
+    session.resetsAt = v.resetsAt;
+  }
+  const allNone = rows.every((r) => r.kind === "none");
+  return { rows, hint: allNone ? "Updates after your next message" : null };
+}

@@ -10,7 +10,7 @@
     ?pinned=1                  code mode with a Pinned section
     ?extra=1                   also show Weekly Opus / Weekly Sonnet (high-usage colours)
     ?plan=free|pro|max|team    plan badge; plan=free drops the account usage windows (Free has no usage endpoint)
-    ?hint=within|approaching|exceeded|windows   message_limit hint mock (use with plan=free)
+    ?hint=none|within|approaching|exceeded|windows   message_limit hint mock (use with plan=free; none = no hint yet)
 -->
 <style>
   :root { --bg:#1f1e1d; --fg:#e8e6e3; --hover:#2b2a28; --muted:#9a968f; --line:#33312f; }
@@ -90,7 +90,7 @@
     var plan = q.get("plan"), hint = q.get("hint");
     if (plan) state.plan = plan;
     if (plan === "free") state.accountUsage = null;
-    if (hint) {
+    if (hint && hint !== "none") {
       var sec = function (ms) { return Math.floor((now + ms) / 1000); }, f = {};
       if (hint === "within") f = { type: "message_limit", "message_limit.type": "within_limit" };
       else if (hint === "approaching") f = { type: "message_limit", "message_limit.type": "approaching_limit", "message_limit.remaining": 3, "message_limit.resetsAt": sec(2 * 3600000 + 14 * min) };

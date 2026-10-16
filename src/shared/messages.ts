@@ -9,6 +9,7 @@ import type {
   AccountUsage,
   CaptureDiag,
   SwDiag,
+  UsageDiag,
   Source,
   CapturedEvent,
   DeviceInfo,
@@ -107,8 +108,8 @@ export interface UiResponseData {
   "get-hub-devices": WidgetState["hub"];
   "test-connection": { reachable: boolean; detail: string };
   "sync-now": SyncState;
-  "get-diag": { page: CaptureDiag | null; sw: SwDiag };
-  "reset-diag": { page: CaptureDiag | null; sw: SwDiag };
+  "get-diag": { page: CaptureDiag | null; sw: SwDiag; usage: UsageDiag | null };
+  "reset-diag": { page: CaptureDiag | null; sw: SwDiag; usage: UsageDiag | null };
   "export-data": { json: string };
   "clear-data": UiState;
 }

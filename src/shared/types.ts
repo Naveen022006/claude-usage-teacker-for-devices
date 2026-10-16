@@ -132,6 +132,7 @@ export interface StorageShape {
   syncState: SyncState;
   captureDiag: CaptureDiag | null;
   swDiag: SwDiag;
+  usageDiag: UsageDiag | null;
 }
 
 /** POST /api/report body — docs/04-device-sync.md. Keep `v` versioned. */
@@ -178,3 +179,11 @@ export interface SwDiag {
 }
 
 export const DEFAULT_SW_DIAG: SwDiag = { eventsReceived: 0, eventsRejected: 0, lastRejectReason: null, eventsStored: 0 };
+
+/** Shape (never values) of the last /usage response, stored as `usageDiag`. */
+export interface UsageDiag {
+  at: number;
+  status: number | null; // HTTP status, null = network/JSON error
+  shape: Record<string, string | Record<string, string>>;
+  parsed: boolean;
+}

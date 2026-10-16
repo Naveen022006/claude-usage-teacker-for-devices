@@ -43,4 +43,10 @@ fieldset.devices { border: 1px solid var(--line); border-radius: 6px; padding: 8
 fieldset.devices legend { font-weight: 600; padding: 0 4px; }
 .devlist { display: grid; gap: 4px; margin-bottom: 6px; }
 .devlist label { display: flex; align-items: center; gap: 8px; }
+.diag { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 12px; }
+.diag h2 { font-size: 16px; margin: 0 0 4px; } .diag h3 { font-size: 13px; margin: 14px 0 4px; }
+.dtable { border-collapse: collapse; width: 100%; font-size: 12px; }
+.dtable th, .dtable td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.dtable td { font-variant-numeric: tabular-nums; word-break: break-word; }
+.scroll { overflow-x: auto; }
 code { font-size: 11px; word-break: break-all; }

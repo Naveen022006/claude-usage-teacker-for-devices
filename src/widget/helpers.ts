@@ -159,16 +159,19 @@ export function pillLabel(ws: AccountWindow[] | undefined): string {
 
 // ---- sidebar panel helpers ----
 
-/** Countdown without seconds: "3d 0h", "4h 55m", "12m", "<1m", "now" when elapsed. Callers refresh it every 30 s. */
+/** Countdown with seconds: "45s", "12m 05s", "3h 20m 15s", "6d 16h 20m 15s"; "now" when elapsed. Callers refresh it every 1 s. */
 export function formatCountdown(ms: number): string {
-  if (!Number.isFinite(ms) || ms <= 0) return "now";
-  const mins = Math.floor(ms / 60_000);
-  if (mins < 1) return "<1m";
-  const d = Math.floor(mins / 1440);
-  const h = Math.floor((mins % 1440) / 60);
-  if (d >= 1) return `${d}d ${h}h`;
-  if (h >= 1) return `${h}h ${mins % 60}m`;
-  return `${mins}m`;
+  if (!Number.isFinite(ms) || ms < 1000) return "now";
+  const total = Math.floor(ms / 1000);
+  const s = total % 60;
+  const m = Math.floor(total / 60) % 60;
+  const h = Math.floor(total / 3600) % 24;
+  const d = Math.floor(total / 86400);
+  const ss = String(s).padStart(2, "0");
+  if (d >= 1) return `${d}d ${h}h ${m}m ${ss}s`;
+  if (h >= 1) return `${h}h ${m}m ${ss}s`;
+  if (m >= 1) return `${m}m ${ss}s`;
+  return `${s}s`;
 }
 
 /** Sidebar tone: blue (ok) < 80, amber >= 80, red >= 95. */

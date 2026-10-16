@@ -7,6 +7,8 @@
 import type {
   Aggregates,
   AccountUsage,
+  CaptureDiag,
+  SwDiag,
   Source,
   CapturedEvent,
   DeviceInfo,
@@ -21,7 +23,8 @@ export const NS = "claude-usage" as const;
 export type PageMessage =
   | { ns: typeof NS; type: "usage-event"; payload: CapturedEvent }
   | { ns: typeof NS; type: "org-seen"; payload: { orgId: string } }
-  | { ns: typeof NS; type: "limit-hint"; payload: LimitHint };
+  | { ns: typeof NS; type: "limit-hint"; payload: LimitHint }
+  | { ns: typeof NS; type: "diag"; payload: CaptureDiag };
 
 /**
  * Requests from the claude.ai widget content script (sender.tab on https://claude.ai/ only).
@@ -73,6 +76,8 @@ export type UiRequest =
   | { type: "get-hub-devices" }
   | { type: "test-connection" }
   | { type: "sync-now" }
+  | { type: "get-diag" }
+  | { type: "reset-diag" }
   | { type: "export-data" }
   | { type: "clear-data" };
 
@@ -94,6 +99,8 @@ export interface UiResponseData {
   "get-hub-devices": WidgetState["hub"];
   "test-connection": { reachable: boolean; detail: string };
   "sync-now": SyncState;
+  "get-diag": { page: CaptureDiag | null; sw: SwDiag };
+  "reset-diag": { page: CaptureDiag | null; sw: SwDiag };
   "export-data": { json: string };
   "clear-data": UiState;
 }

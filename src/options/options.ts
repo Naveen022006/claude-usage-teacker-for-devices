@@ -172,4 +172,74 @@ $("clear").addEventListener("click", async () => {
   setStatus(res.ok ? "Data cleared." : "Clear failed: " + res.error, res.ok ? "ok" : "bad");
 });
 
+// ---- diagnostics ----
+type DiagData = { page: import("../shared/types").CaptureDiag | null; sw: import("../shared/types").SwDiag };
+let lastDiag: DiagData | null = null;
+
+function fillTable(t: HTMLElement, head: string[] | null, rows: string[][]): void {
+  t.replaceChildren();
+  const mk = (tag: "th" | "td", cells: string[]) => {
+    const tr = document.createElement("tr");
+    for (const c of cells) tr.append(Object.assign(document.createElement(tag), { textContent: c }));
+    t.append(tr);
+  };
+  if (head) mk("th", head);
+  for (const r of rows) mk("td", r);
+}
+
+function renderDiag(d: DiagData): void {
+  lastDiag = d;
+  const p = d.page;
+  const yn = (b: boolean) => (b ? "yes" : "no");
+  fillTable($("diagCounters"), null, [
+    ["Hook installed (last report)", p ? yn(p.hookInstalled) : "no report yet - reload claude.ai"],
+    ["Last page report", p ? new Date(p.updatedAt).toLocaleTimeString() : "-"],
+    ["fetch calls to /api/", String(p?.fetchCalls ?? 0)],
+    ["Streams seen", String(p?.streamsSeen ?? 0)],
+    ["Streams without known events", String(p?.emptyStreams ?? 0)],
+    ["Events posted by page", String(p?.eventsPosted ?? 0)],
+    ["Events received by service worker", String(d.sw.eventsReceived)],
+    ["Events rejected", String(d.sw.eventsRejected) + (d.sw.lastRejectReason ? ` (last: ${d.sw.lastRejectReason})` : "")],
+    ["Events stored", String(d.sw.eventsStored)],
+  ]);
+  fillTable(
+    $("diagObs"),
+    ["Time", "Path", "Type", "HTTP", "Match", "Events", "Recorded"],
+    (p?.observations ?? []).slice().reverse().map((o) => [
+      new Date(o.at).toLocaleTimeString(),
+      o.pathPattern,
+      o.contentType,
+      String(o.status),
+      yn(o.matchedRegex),
+      o.eventTypes.join(", "),
+      o.recorded ? "yes" : "no" + (o.reason ? `: ${o.reason}` : ""),
+    ]),
+  );
+}
+
+async function loadDiag(): Promise<void> {
+  const res = await callSw({ type: "get-diag" });
+  if (res.ok) renderDiag(res.data);
+}
+
+$("diagCopy").addEventListener("click", async () => {
+  if (!lastDiag) await loadDiag();
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(lastDiag, null, 2));
+    setStatus("Diagnostics copied.", "ok");
+  } catch (e) {
+    setStatus("Copy failed: " + (e instanceof Error ? e.message : String(e)), "bad");
+  }
+});
+
+$("diagReset").addEventListener("click", async () => {
+  const res = await callSw({ type: "reset-diag" });
+  if (res.ok) renderDiag(res.data);
+});
+
+void loadDiag();
+setInterval(() => {
+  if (!document.hidden) void loadDiag();
+}, 3000);
+
 void load();

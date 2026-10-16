@@ -116,7 +116,7 @@ const SB_WINDOWS: { id: TabId; label: string }[] = [
   { id: "week", label: "7d" },
 ];
 const MAX_MODEL_ROWS = 6;
-const COUNTDOWN_MS = 30_000;
+const COUNTDOWN_MS = 1_000;
 
 function ring(pct: number | null, size: number, stroke: number): SVGElement {
   const r = (size - stroke) / 2;
@@ -296,6 +296,7 @@ class Widget {
   private tickCountdowns(): void {
     try {
       if (dead) return this.destroy();
+      if (document.hidden) return; // 1 s tick; nothing to update in a background tab
       for (const el of Array.from(this.root.querySelectorAll(".cd[data-reset]"))) {
         const ms = Date.parse(el.getAttribute("data-reset") ?? "") - Date.now();
         const txt = formatCountdown(ms);

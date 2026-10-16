@@ -1,4 +1,4 @@
-import type { CapturedEvent, LimitHint } from "./types";
+import type { CaptureDiag, CapturedEvent, DiagObservation, LimitHint } from "./types";
 import { NS, type PageMessage, type WidgetRequest } from "./messages";
 
 const STATUSES = ["ok", "error", "aborted"];
@@ -22,6 +22,47 @@ export function validateCapturedEvent(x: unknown): CapturedEvent | null {
   if (typeof status !== "string" || !STATUSES.includes(status)) return null;
   if (typeof kind !== "string" || !KINDS.includes(kind)) return null;
   return { id, ts, model, promptChars, outputChars, thinkingChars, status, kind } as CapturedEvent;
+}
+
+/** Human-readable reason why a usage-event payload fails validation, or null if it is valid. */
+export function explainCapturedEventError(x: unknown): string | null {
+  if (!isObj(x)) return "payload is not an object";
+  if (!str(x.id, 200)) return "bad id";
+  if (!str(x.model, 100)) return "bad model";
+  for (const k of ["ts", "promptChars", "outputChars", "thinkingChars"]) if (!num(x[k])) return `bad ${k}`;
+  if (typeof x.status !== "string" || !STATUSES.includes(x.status)) return "bad status";
+  if (typeof x.kind !== "string" || !KINDS.includes(x.kind)) return "bad kind";
+  return null;
+}
+
+const text = (x: unknown, max: number): x is string => typeof x === "string" && x.length <= max;
+const bool = (x: unknown): x is boolean => typeof x === "boolean";
+
+function validateObservation(x: unknown): DiagObservation | null {
+  if (!isObj(x)) return null;
+  const { at, pathPattern, contentType, status, matchedRegex, eventTypes, recorded, reason } = x;
+  if (!num(at) || !text(pathPattern, 200) || !text(contentType, 80) || !num(status)) return null;
+  if (!bool(matchedRegex) || !bool(recorded)) return null;
+  if (!Array.isArray(eventTypes) || eventTypes.length > 15 || !eventTypes.every((t) => text(t, 40))) return null;
+  if (reason !== undefined && !text(reason, 120)) return null;
+  const o: DiagObservation = { at, pathPattern, contentType, status, matchedRegex, eventTypes: eventTypes as string[], recorded };
+  if (reason !== undefined) o.reason = reason;
+  return o;
+}
+
+export function validateDiag(x: unknown): CaptureDiag | null {
+  if (!isObj(x)) return null;
+  const { updatedAt, hookInstalled, fetchCalls, streamsSeen, emptyStreams, eventsPosted, observations } = x;
+  if (!num(updatedAt) || !bool(hookInstalled)) return null;
+  if (!num(fetchCalls) || !num(streamsSeen) || !num(emptyStreams) || !num(eventsPosted)) return null;
+  if (!Array.isArray(observations) || observations.length > 20) return null;
+  const obs: DiagObservation[] = [];
+  for (const o of observations) {
+    const v = validateObservation(o);
+    if (!v) return null;
+    obs.push(v);
+  }
+  return { updatedAt, hookInstalled, fetchCalls, streamsSeen, emptyStreams, eventsPosted, observations: obs };
 }
 
 function validateHint(x: unknown): LimitHint | null {
@@ -56,6 +97,10 @@ export function validatePageMessage(x: unknown): PageMessage | null {
     case "limit-hint": {
       const payload = validateHint(x.payload);
       return payload && { ns: NS, type: "limit-hint", payload };
+    }
+    case "diag": {
+      const payload = validateDiag(x.payload);
+      return payload && { ns: NS, type: "diag", payload };
     }
     default:
       return null;

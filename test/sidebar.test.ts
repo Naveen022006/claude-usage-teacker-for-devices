@@ -7,13 +7,15 @@ import { CODE_SOURCES, combineDevices, formatCountdown, modelShares, msUntil, pi
 const win = (messages: number): WindowAggregate => ({ messages, promptTokens: 0, outputTokens: 0, byModel: {} });
 
 describe("sidebar helpers", () => {
-  it("formatCountdown: d h / h m / m, no seconds, now when elapsed", () => {
-    expect(formatCountdown(4 * 3600_000 + 55 * 60_000 + 5_000)).toBe("4h 55m");
-    expect(formatCountdown(3 * 86400_000 + 30_000)).toBe("3d 0h");
-    expect(formatCountdown(3 * 86400_000 + 4 * 3600_000 + 12 * 60_000)).toBe("3d 4h");
-    expect(formatCountdown(12 * 60_000 + 30_000)).toBe("12m");
-    expect(formatCountdown(3600_000)).toBe("1h 0m");
-    expect(formatCountdown(30_000)).toBe("<1m");
+  it("formatCountdown: s / m s / h m s / d h m s, now when elapsed", () => {
+    expect(formatCountdown(4 * 3600_000 + 55 * 60_000 + 5_000)).toBe("4h 55m 05s");
+    expect(formatCountdown(3 * 86400_000 + 30_000)).toBe("3d 0h 0m 30s");
+    expect(formatCountdown(6 * 86400_000 + 16 * 3600_000 + 20 * 60_000 + 15_000)).toBe("6d 16h 20m 15s");
+    expect(formatCountdown(3 * 3600_000 + 20 * 60_000 + 15_000)).toBe("3h 20m 15s");
+    expect(formatCountdown(12 * 60_000 + 5_000)).toBe("12m 05s");
+    expect(formatCountdown(3600_000)).toBe("1h 0m 00s");
+    expect(formatCountdown(45_000)).toBe("45s");
+    expect(formatCountdown(999)).toBe("now");
     expect(formatCountdown(0)).toBe("now");
     expect(formatCountdown(-5)).toBe("now");
     expect(formatCountdown(NaN)).toBe("now");

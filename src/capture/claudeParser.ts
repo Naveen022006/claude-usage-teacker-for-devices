@@ -17,11 +17,49 @@ export function isCompletionUrl(url: string): boolean {
   return typeof url === "string" && COMPLETION_RE.test(url);
 }
 
-/** Build request metadata from the URL and parsed/raw JSON body. Returns null if not a completion URL. */
-export function parseRequestMeta(url: string, body: unknown): RequestMeta | null {
+const ORG_PATH_RE = /\/api\/organizations\/([^/?#]+)/;
+
+function isObj0(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+/** Character length of a message content that may be a string, {text}, or an array of those. Lengths only. */
+function contentLength(c: unknown, depth = 0): number {
+  if (typeof c === "string") return c.length;
+  if (depth > 3) return 0;
+  if (Array.isArray(c)) return c.reduce<number>((n, x) => n + contentLength(x, depth + 1), 0);
+  if (isObj0(c)) {
+    if (typeof c.text === "string") return c.text.length;
+    if (c.content !== undefined) return contentLength(c.content, depth + 1);
+  }
+  return 0;
+}
+
+function modelOf(o: Record<string, unknown>): string | undefined {
+  const cands = [o.model, isObj0(o.completion) ? o.completion.model : undefined, isObj0(o.settings) ? o.settings.model : undefined];
+  for (const c of cands) if (typeof c === "string" && c) return c;
+  return undefined;
+}
+
+function promptLength(o: Record<string, unknown>): number {
+  if (typeof o.prompt === "string") return o.prompt.length;
+  if (isObj0(o.completion) && typeof o.completion.prompt === "string") return o.completion.prompt.length;
+  if (Array.isArray(o.messages) && o.messages.length) {
+    // History is resent each turn; measure only the newest message.
+    const last = o.messages[o.messages.length - 1];
+    return isObj0(last) ? contentLength(last.content ?? last.text) : contentLength(last);
+  }
+  return 0;
+}
+
+/** Tolerant request metadata for any same-origin /api/ request (never null). */
+export function parseRequestMetaAny(url: string, body: unknown): RequestMeta {
+  const meta: RequestMeta = { kind: "new", promptChars: 0 };
   try {
-    const m = typeof url === "string" ? COMPLETION_RE.exec(url) : null;
-    if (!m) return null;
+    const u = typeof url === "string" ? url : "";
+    const org = ORG_PATH_RE.exec(u);
+    if (org) meta.orgId = org[1];
+    if (/retry_completion/.test(u)) meta.kind = "retry";
     let b: unknown = body;
     if (typeof b === "string") {
       try {
@@ -30,17 +68,27 @@ export function parseRequestMeta(url: string, body: unknown): RequestMeta | null
         b = null;
       }
     }
-    const o = b && typeof b === "object" ? (b as Record<string, unknown>) : {};
-    const meta: RequestMeta = {
-      kind: m[2] ? "retry" : "new",
-      promptChars: typeof o.prompt === "string" ? o.prompt.length : 0,
-      orgId: m[1],
-    };
-    if (typeof o.model === "string" && o.model) meta.requestModel = o.model;
-    return meta;
+    if (isObj0(b)) {
+      meta.promptChars = promptLength(b);
+      const m = modelOf(b);
+      if (m) meta.requestModel = m;
+    }
   } catch {
-    return null;
+    /* fail soft */
   }
+  return meta;
+}
+
+/** Build request metadata from the URL and parsed/raw JSON body. Returns null if not a completion URL. */
+export function parseRequestMeta(url: string, body: unknown): RequestMeta | null {
+  if (!isCompletionUrl(url)) return null;
+  const meta = parseRequestMetaAny(url, body);
+  const m = COMPLETION_RE.exec(url);
+  if (m) {
+    meta.orgId = m[1];
+    meta.kind = m[2] ? "retry" : "new";
+  }
+  return meta;
 }
 
 export interface ClaudeStreamParser {
@@ -48,9 +96,16 @@ export interface ClaudeStreamParser {
   finish(outcome: "done" | "error" | "aborted"): CapturedEvent;
   /** True once a stream-level error event was seen. */
   readonly sawError: boolean;
+  /** Events seen so far: total, how many were of a known reply type, and unique names (max 15). */
+  readonly stats: { total: number; recognized: number; types: string[] };
 }
 
 const MAX_STR = 64;
+/** Event names that mean "this is a reply stream" (ping alone does not count). */
+const KNOWN = new Set([
+  "message_start", "content_block_start", "content_block_delta", "content_block_stop",
+  "message_delta", "message_stop", "completion", "error",
+]);
 
 function isObj(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -80,6 +135,9 @@ export function createClaudeStreamParser(
   let thinkingChars = 0;
   let errored = false;
   const blocks = new Map<number, string>();
+  let total = 0;
+  let recognized = 0;
+  const types = new Set<string>();
 
   const handle = (e: SseEvent) => {
     let j: unknown;
@@ -90,12 +148,26 @@ export function createClaudeStreamParser(
       return;
     }
     if (!isObj(j)) return;
-    const name = e.event !== "message" ? e.event : typeof j.type === "string" ? j.type : e.event;
+    total++;
+    const jt = typeof j.type === "string" ? j.type : "";
+    const name = e.event !== "message" && (KNOWN.has(e.event) || !KNOWN.has(jt)) ? e.event : jt || e.event;
+    if (types.size < 15) types.add(name.slice(0, 40));
+    if (KNOWN.has(name) || name.includes("limit")) recognized++;
+    // Model may sit in message_start.message.model, data.model or data.message.model.
+    if (!model) {
+      const m1 = isObj(j.message) && typeof j.message.model === "string" ? j.message.model : undefined;
+      const m2 = typeof j.model === "string" ? j.model : undefined;
+      model = m1 || m2 || undefined;
+    }
 
     switch (name) {
+      case "completion": {
+        // Legacy claude.ai style: {"type":"completion","completion":"...","model":"..."}
+        if (typeof j.completion === "string") outputChars += j.completion.length;
+        return;
+      }
       case "message_start": {
         const msg = isObj(j.message) ? j.message : {};
-        if (typeof msg.model === "string" && msg.model) model = msg.model;
         if (typeof msg.id === "string" && msg.id) id = msg.id;
         return;
       }
@@ -136,6 +208,9 @@ export function createClaudeStreamParser(
   return {
     get sawError() {
       return errored;
+    },
+    get stats() {
+      return { total, recognized, types: [...types] };
     },
     onEvent(e) {
       try {

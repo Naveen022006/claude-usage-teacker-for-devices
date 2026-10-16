@@ -13,9 +13,9 @@ import {
   type UiState,
   type WidgetState,
 } from "./shared/messages";
-import { DEFAULT_SYNC_STATE, type Settings, type SyncState, type UsageEvent } from "./shared/types";
+import { DEFAULT_SW_DIAG, DEFAULT_SYNC_STATE, type SwDiag, type Settings, type SyncState, type UsageEvent } from "./shared/types";
 import { pickOrg } from "./shared/org";
-import { sanitizeDeviceIds, validatePageMessage, validateWidgetRequest } from "./shared/validate";
+import { explainCapturedEventError, sanitizeDeviceIds, validatePageMessage, validateWidgetRequest } from "./shared/validate";
 import * as store from "./storage";
 import { fetchAccountUsage } from "./sync/accountUsage";
 import { buildReport, fetchHubState, normalizeBase, ping, sendReport } from "./sync/hub";
@@ -79,6 +79,10 @@ chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
       }
       const m = validatePageMessage(msg);
       if (m) void handlePage(m).catch((e) => console.warn("[claude-usage] page message failed", e));
+      else if ((msg as { type?: unknown } | null)?.type === "usage-event") {
+        const reason = explainCapturedEventError((msg as { payload?: unknown }).payload) ?? "invalid message";
+        void bumpSwDiag({ eventsReceived: 1, eventsRejected: 1 }, reason).catch(() => {});
+      }
     }
     return false;
   }
@@ -89,9 +93,31 @@ chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
   return true;
 });
 
+let swDiagChain: Promise<void> = Promise.resolve();
+/** Serialised read-modify-write of the persisted SW counters (the SW can be killed at any time). */
+function bumpSwDiag(delta: Partial<Record<"eventsReceived" | "eventsRejected" | "eventsStored", number>>, reason?: string): Promise<void> {
+  swDiagChain = swDiagChain
+    .then(async () => {
+      const cur = await store.get("swDiag");
+      const next: SwDiag = {
+        eventsReceived: cur.eventsReceived + (delta.eventsReceived ?? 0),
+        eventsRejected: cur.eventsRejected + (delta.eventsRejected ?? 0),
+        eventsStored: cur.eventsStored + (delta.eventsStored ?? 0),
+        lastRejectReason: reason ? reason.slice(0, 120) : cur.lastRejectReason,
+      };
+      await store.set({ swDiag: next });
+    })
+    .catch(() => {});
+  return swDiagChain;
+}
+
 async function handlePage(m: PageMessage): Promise<void> {
   switch (m.type) {
+    case "diag":
+      await store.set({ captureDiag: m.payload });
+      return;
     case "usage-event": {
+      void bumpSwDiag({ eventsReceived: 1 });
       const [device, settings] = await Promise.all([store.ensureDevice(), store.get("settings")]);
       const c = m.payload;
       const cpt = settings.charsPerToken;
@@ -120,6 +146,7 @@ async function handlePage(m: PageMessage): Promise<void> {
         } else next.push(ev);
         return pruneEvents(next, Date.now());
       });
+      void bumpSwDiag({ eventsStored: 1 });
       if (isNew) {
         const s = await store.get("syncState");
         await store.set({ syncState: { ...s, queue: s.queue + 1 } });
@@ -379,6 +406,12 @@ async function handleUi(req: UiRequest): Promise<UiResponse> {
         clearTimeout(syncTimer);
         return ok<"sync-now">(await syncNow());
       }
+      case "get-diag":
+        return ok<"get-diag">({ page: await store.get("captureDiag"), sw: await store.get("swDiag") });
+      case "reset-diag":
+        await swDiagChain;
+        await store.set({ captureDiag: null, swDiag: { ...DEFAULT_SW_DIAG } });
+        return ok<"reset-diag">({ page: null, sw: { ...DEFAULT_SW_DIAG } });
       case "export-data": {
         const [device, settings, events, accountUsage] = await Promise.all([
           store.ensureDevice(),

@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, DEFAULT_SYNC_STATE, type DeviceInfo, type StorageShape } from "./shared/types";
+import { DEFAULT_SETTINGS, DEFAULT_SW_DIAG, DEFAULT_SYNC_STATE, type DeviceInfo, type StorageShape } from "./shared/types";
 
 type Defaulted = Exclude<keyof StorageShape, "device">;
 const DEFAULTS: { [K in Defaulted]: StorageShape[K] } = {
@@ -8,6 +8,8 @@ const DEFAULTS: { [K in Defaulted]: StorageShape[K] } = {
   orgId: null,
   settings: DEFAULT_SETTINGS,
   syncState: DEFAULT_SYNC_STATE,
+  captureDiag: null,
+  swDiag: DEFAULT_SW_DIAG,
 };
 
 /** Pre-pivot settings used deskbuddyUrl / sharedToken. Rename once, drop the old LAN default. */
@@ -31,7 +33,7 @@ export async function get(key: keyof StorageShape): Promise<unknown> {
   if (key === "device") return v ?? undefined;
   if (v === undefined || v === null) return DEFAULTS[key];
   // merge so newly added fields get defaults
-  if (key === "settings" || key === "syncState") return { ...DEFAULTS[key], ...v };
+  if (key === "settings" || key === "syncState" || key === "swDiag") return { ...DEFAULTS[key], ...v };
   return v;
 }
 

@@ -120,6 +120,8 @@ export interface StorageShape {
   orgId: string | null; // learned from captured completion URLs
   settings: Settings;
   syncState: SyncState;
+  captureDiag: CaptureDiag | null;
+  swDiag: SwDiag;
 }
 
 /** POST /api/report body — docs/04-device-sync.md. Keep `v` versioned. */
@@ -133,3 +135,36 @@ export interface Report {
   estimated: boolean;
   account: AccountUsage | null;
 }
+
+/** One observed same-origin /api/ response (diagnostics only; no message content). */
+export interface DiagObservation {
+  at: number;
+  pathPattern: string;
+  contentType: string;
+  status: number;
+  matchedRegex: boolean;
+  eventTypes: string[];
+  recorded: boolean;
+  reason?: string;
+}
+
+/** Posted by the MAIN-world hook, stored by the SW as `captureDiag`. */
+export interface CaptureDiag {
+  updatedAt: number;
+  hookInstalled: boolean;
+  fetchCalls: number;
+  streamsSeen: number;
+  emptyStreams: number;
+  eventsPosted: number;
+  observations: DiagObservation[];
+}
+
+/** Service-worker-side counters, stored as `swDiag`. */
+export interface SwDiag {
+  eventsReceived: number;
+  eventsRejected: number;
+  lastRejectReason: string | null;
+  eventsStored: number;
+}
+
+export const DEFAULT_SW_DIAG: SwDiag = { eventsReceived: 0, eventsRejected: 0, lastRejectReason: null, eventsStored: 0 };

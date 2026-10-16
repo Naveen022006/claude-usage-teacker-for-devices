@@ -1,6 +1,6 @@
 // ISOLATED world content script: relays validated page messages to the service worker.
 
-const TYPES = new Set(["usage-event", "org-seen", "limit-hint"]);
+const TYPES = new Set(["usage-event", "org-seen", "limit-hint", "diag"]);
 
 window.addEventListener("message", (event: MessageEvent) => {
   try {

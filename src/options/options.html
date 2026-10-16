@@ -54,6 +54,19 @@
   </form>
 
   <p id="status" role="status" aria-live="polite"></p>
+
+  <section id="diagSection" class="diag">
+    <h2>Diagnostics</h2>
+    <p class="small">Capture pipeline health on claude.ai. Contains no message content, only counters, redacted URL paths and event names.</p>
+    <table id="diagCounters" class="dtable"></table>
+    <h3>Recent API responses</h3>
+    <div class="scroll"><table id="diagObs" class="dtable"></table></div>
+    <div class="row actions">
+      <button id="diagCopy" type="button">Copy diagnostics</button>
+      <button id="diagReset" type="button">Reset</button>
+    </div>
+  </section>
+
   <p class="small">Device ID: <code id="deviceId">…</code></p>
 </main>
 <script src="options.js"></script>

@@ -2,20 +2,34 @@ import { describe, expect, it } from "vitest";
 import type { HubDevice } from "../src/shared/messages";
 import type { Aggregates, WindowAggregate } from "../src/shared/types";
 import { sanitizeDeviceIds } from "../src/shared/validate";
-import { CODE_SOURCES, combineDevices, formatCountdown, modelShares, msUntil, pickWindow, themeFromColor } from "../src/widget/helpers";
+import { CODE_SOURCES, combineDevices, formatCountdown, modelShares, msUntil, pickWindow, prettyModel, sbTone, themeFromColor } from "../src/widget/helpers";
 
 const win = (messages: number): WindowAggregate => ({ messages, promptTokens: 0, outputTokens: 0, byModel: {} });
 
 describe("sidebar helpers", () => {
-  it("formatCountdown: h:mm:ss under 24h, d h m beyond, now when elapsed", () => {
-    expect(formatCountdown(2 * 3600_000 + 14 * 60_000 + 5_000)).toBe("2:14:05");
-    expect(formatCountdown(59_000)).toBe("0:00:59");
-    expect(formatCountdown(23 * 3600_000 + 59 * 60_000 + 59_000)).toBe("23:59:59");
-    expect(formatCountdown(3 * 86400_000 + 4 * 3600_000 + 12 * 60_000 + 30_000)).toBe("3d 4h 12m");
-    expect(formatCountdown(86400_000)).toBe("1d 0h 0m");
+  it("formatCountdown: d h / h m / m, no seconds, now when elapsed", () => {
+    expect(formatCountdown(4 * 3600_000 + 55 * 60_000 + 5_000)).toBe("4h 55m");
+    expect(formatCountdown(3 * 86400_000 + 30_000)).toBe("3d 0h");
+    expect(formatCountdown(3 * 86400_000 + 4 * 3600_000 + 12 * 60_000)).toBe("3d 4h");
+    expect(formatCountdown(12 * 60_000 + 30_000)).toBe("12m");
+    expect(formatCountdown(3600_000)).toBe("1h 0m");
+    expect(formatCountdown(30_000)).toBe("<1m");
     expect(formatCountdown(0)).toBe("now");
     expect(formatCountdown(-5)).toBe("now");
     expect(formatCountdown(NaN)).toBe("now");
+  });
+  it("sbTone: blue < 80, amber >= 80, red >= 95", () => {
+    expect([sbTone(0), sbTone(79.9), sbTone(80), sbTone(94.9), sbTone(95)]).toEqual(["ok", "ok", "warn", "warn", "bad"]);
+  });
+  it("prettyModel", () => {
+    expect(prettyModel("claude-sonnet-5-5")).toBe("Sonnet 5.5");
+    expect(prettyModel("claude-opus-5-5")).toBe("Opus 5.5");
+    expect(prettyModel("claude-haiku-4-5-20251001")).toBe("Haiku 4.5");
+    expect(prettyModel("claude-fable-5-1")).toBe("Fable 5.1");
+    expect(prettyModel("claude-3-5-sonnet-20241022")).toBe("Sonnet 3.5");
+    expect(prettyModel("claude-opus-4")).toBe("Opus 4");
+    expect(prettyModel("claude-weird_thing")).toBe("weird_thing");
+    expect(prettyModel("gpt-x")).toBe("gpt-x");
   });
   it("msUntil", () => {
     expect(msUntil("1970-01-01T00:00:10Z", 0)).toBe(10_000);
@@ -29,8 +43,8 @@ describe("sidebar helpers", () => {
     expect(
       modelShares({ "claude-sonnet-5-5": { messages: 31, tokens: 12400 }, "claude-haiku-4-5": { messages: 5, tokens: 7600 } }),
     ).toEqual([
-      { model: "sonnet-5-5", pct: 62, tokens: 12400, messages: 31 },
-      { model: "haiku-4-5", pct: 38, tokens: 7600, messages: 5 },
+      { model: "sonnet-5-5", label: "Sonnet 5.5", pct: 62, tokens: 12400, messages: 31 },
+      { model: "haiku-4-5", label: "Haiku 4.5", pct: 38, tokens: 7600, messages: 5 },
     ]);
     expect(modelShares({})).toEqual([]);
     expect(modelShares({ m: { messages: 0, tokens: 0 } })).toEqual([]);

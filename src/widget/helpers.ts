@@ -159,17 +159,35 @@ export function pillLabel(ws: AccountWindow[] | undefined): string {
 
 // ---- sidebar panel helpers ----
 
-/** Live countdown: "2:14:05" under 24 h, "3d 4h 12m" beyond, "now" when elapsed. */
+/** Countdown without seconds: "3d 0h", "4h 55m", "12m", "<1m", "now" when elapsed. Callers refresh it every 30 s. */
 export function formatCountdown(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) return "now";
-  const total = Math.ceil(ms / 1000);
-  const d = Math.floor(total / 86400);
-  const h = Math.floor((total % 86400) / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const sec = total % 60;
-  if (d >= 1) return `${d}d ${h}h ${m}m`;
-  const two = (n: number) => String(n).padStart(2, "0");
-  return `${h}:${two(m)}:${two(sec)}`;
+  const mins = Math.floor(ms / 60_000);
+  if (mins < 1) return "<1m";
+  const d = Math.floor(mins / 1440);
+  const h = Math.floor((mins % 1440) / 60);
+  if (d >= 1) return `${d}d ${h}h`;
+  if (h >= 1) return `${h}h ${mins % 60}m`;
+  return `${mins}m`;
+}
+
+/** Sidebar tone: blue (ok) < 80, amber >= 80, red >= 95. */
+export function sbTone(pct: number): Tone {
+  return pct >= 95 ? "bad" : pct >= 80 ? "warn" : "ok";
+}
+
+/** "claude-sonnet-5-5" -> "Sonnet 5.5", "claude-3-5-sonnet-20241022" -> "Sonnet 3.5"; unknown -> id without "claude-". */
+export function prettyModel(id: string): string {
+  const raw = String(id ?? "").replace(/^claude-/, "");
+  const cap = (f: string) => f.charAt(0).toUpperCase() + f.slice(1);
+  const ver = (a: string, b?: string) => (b !== undefined ? `${a}.${b}` : a);
+  // family first: sonnet-5-5, haiku-4-5-20251001, fable-5-1, opus-4
+  let m = /^([a-z]+)-(\d{1,2})(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(raw);
+  if (m && !/^\d+$/.test(m[1])) return `${cap(m[1])} ${ver(m[2], m[3])}`;
+  // version first: 3-5-sonnet-20241022, 3-opus-20240229
+  m = /^(\d{1,2})(?:-(\d{1,2}))?-([a-z]+)(?:-\d{8})?$/.exec(raw);
+  if (m) return `${cap(m[3])} ${ver(m[1], m[2])}`;
+  return raw;
 }
 
 /** ms until an ISO timestamp, or null if missing/invalid. */
@@ -181,6 +199,7 @@ export function msUntil(iso: string | undefined, now: number): number | null {
 
 export interface ModelShare {
   model: string;
+  label: string; // prettyModel(id)
   pct: number; // integer, all shares sum to exactly 100
   tokens: number;
   messages: number;
@@ -188,7 +207,7 @@ export interface ModelShare {
 
 /** Share of each model by tokens (messages if no tokens at all), largest-remainder rounded, sorted desc. */
 export function modelShares(byModel: WindowAggregate["byModel"]): ModelShare[] {
-  const entries = Object.entries(byModel ?? {}).map(([m, v]) => ({ model: shortModel(m), tokens: v?.tokens || 0, messages: v?.messages || 0 }));
+  const entries = Object.entries(byModel ?? {}).map(([m, v]) => ({ model: shortModel(m), tokens: v?.tokens || 0, messages: v?.messages || 0, label: prettyModel(m) }));
   const byTokens = entries.some((e) => e.tokens > 0);
   const weight = (e: { tokens: number; messages: number }) => (byTokens ? e.tokens : e.messages);
   const rows = entries.filter((e) => weight(e) > 0);
@@ -206,7 +225,7 @@ export function modelShares(byModel: WindowAggregate["byModel"]): ModelShare[] {
       }
     });
   return out
-    .map((r) => ({ model: r.e.model, pct: r.pct, tokens: r.e.tokens, messages: r.e.messages }))
+    .map((r) => ({ model: r.e.model, label: r.e.label, pct: r.pct, tokens: r.e.tokens, messages: r.e.messages }))
     .sort((a, b) => b.pct - a.pct || b.tokens - a.tokens || a.model.localeCompare(b.model));
 }
 

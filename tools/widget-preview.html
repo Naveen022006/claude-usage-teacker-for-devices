@@ -6,6 +6,7 @@
     ?mode=chat|code|floating   which claude.ai layout to imitate (floating = no sidebar, old pill)
     ?theme=dark|light          sidebar colours (claude.ai can be dark while the OS is light)
     ?hub=off                   code mode without a configured hub
+    ?extra=1                   also show Weekly Opus / Weekly Sonnet (high-usage colours)
 -->
 <style>
   :root { --bg:#1f1e1d; --fg:#e8e6e3; --hover:#2b2a28; --muted:#9a968f; --line:#33312f; }
@@ -69,10 +70,10 @@
     var state = {
       device: { deviceId: "me", deviceName: "Chrome" }, aggregates: windows(1),
       accountUsage: { fetchedAt: now, windows: [
-        { name: "five_hour", utilization: 42, resetsAt: new Date(now + 134 * min + 5000).toISOString() },
-        { name: "seven_day", utilization: 71, resetsAt: new Date(now + 3 * 86400000 + 4 * 3600000 + 12 * min).toISOString() },
+        { name: "five_hour", utilization: 2, resetsAt: new Date(now + 295 * min + 20000).toISOString() },
+        { name: "seven_day", utilization: 0, resetsAt: new Date(now + 3 * 86400000 + 20000).toISOString() } ].concat(q.get("extra") === "1" ? [
         { name: "seven_day_opus", utilization: 92, resetsAt: new Date(now + 2 * 86400000).toISOString() },
-        { name: "seven_day_sonnet", utilization: 23, resetsAt: new Date(now + 5 * 86400000).toISOString() } ] },
+        { name: "seven_day_sonnet", utilization: 83, resetsAt: new Date(now + 5 * 86400000).toISOString() } ] : []) },
       syncState: { lastOkAt: now - 20000, lastAttemptAt: now, lastError: null, queue: 0 }, showWidget: true, codeDeviceIds: [], now: now,
       hub: q.get("hub") === "off" ? { configured: false, ok: false, fetchedAt: 0, devices: [] } : { configured: true, ok: true, fetchedAt: now, devices: [
         { deviceId: "me", deviceName: "Chrome", source: "chrome", estimated: true, receivedAt: now, fresh: true, windows: windows(1) },

@@ -11,6 +11,7 @@
     "watch": "node scripts/build.mjs --watch",
     "build:daemon": "node daemon/build.mjs",
     "daemon": "node daemon/dist/deskbuddy-cc.mjs",
+    "mock": "node tools/mock-deskbuddy.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

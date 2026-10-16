@@ -23,6 +23,17 @@ describe("parseTranscriptLine", () => {
     });
     expect(JSON.stringify(e)).not.toContain("SECRET");
   });
+  it("tags source by entrypoint", () => {
+    const src = (entrypoint?: string) => {
+      const e = parseTranscriptLine(asst("m", 1, entrypoint === undefined ? {} : { entrypoint }), "dev")!;
+      return [e.source, e.deviceId];
+    };
+    expect(src("claude-desktop")).toEqual(["desktop", "dev-desktop"]);
+    expect(src("cli")).toEqual(["claude-code", "dev"]);
+    expect(src("claude-vscode")).toEqual(["claude-code", "dev"]);
+    expect(src("something-new")).toEqual(["claude-code", "dev"]);
+    expect(src()).toEqual(["claude-code", "dev"]);
+  });
   it("flags api errors", () => {
     expect(parseTranscriptLine(asst("m", 1, { isApiErrorMessage: true }), "d")!.status).toBe("error");
   });

@@ -16,6 +16,11 @@ contract as the extension (`source:"claude-code"`, `estimated:false`).
 - `<synthetic>` model messages (local, no API usage) are skipped.
 - Files are tailed incrementally via per-file byte cursors, so rescans are cheap.
 
+## Per-client split (phase 3)
+Events are tagged by the line's `entrypoint`: `claude-desktop` -> `source:"desktop"`, everything else -> `claude-code`.
+The daemon sends **one report per source** with events in the last 7 days (deviceId `<id>` and `<id>-desktop`,
+names `<host>-ClaudeCode` / `<host>-Desktop`, see `config --desktop-name`). Details and limits: docs/10.
+
 ## Privacy
 Only ids, model, timestamp and usage numbers are read or stored. Message content is never kept or logged.
 
@@ -30,7 +35,8 @@ npm run daemon -- run               # long-running (default command)
 npm run daemon -- status
 ```
 Config: `~/.deskbuddy/claude-code.json`; state (cursors + last 30 days of events):
-`~/.deskbuddy/claude-code-state.json`. `DESKBUDDY_URL` and `DESKBUDDY_TOKEN` env vars override the file.
+`~/.deskbuddy/claude-code-state.json`. `DESKBUDDY_URL` and `DESKBUDDY_TOKEN` env vars override the file; `DESKBUDDY_HOME` relocates the directory.
+State carries a `rev` marker; an older state is reset once on load so events are re-tagged by client.
 Defaults: scan every 10 s, heartbeat sync every 60 s, new replies sync after a 3 s debounce, first-run backfill 7 days.
 
 ## Autostart

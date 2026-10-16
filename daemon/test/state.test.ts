@@ -24,6 +24,7 @@ describe("config", () => {
     expect(a.backfillDays).toBe(7);
     expect(a.deskbuddyUrl).toBe("");
     expect(a.deviceName).toMatch(/-ClaudeCode$/);
+    expect(a.desktopDeviceName).toMatch(/-Desktop$/);
     expect(a.deviceId).toMatch(/^[0-9a-f-]{36}$/);
     const b = await loadConfig(dir);
     expect(b.deviceId).toBe(a.deviceId);
@@ -78,6 +79,17 @@ describe("state", () => {
     const r = await loadState(dir);
     expect(r.cursors["/f"].offset).toBe(5);
     expect(r.events.map((e) => e.id)).toEqual(["new"]);
+  });
+
+  it("resets cursors and events once when rev is missing, keeps lastSync", async () => {
+    const old = { v: 1, cursors: { "/f": { offset: 1, size: 1, mtimeMs: 1 } }, events: [{ id: "a" }], lastSync: { okAt: 5, attemptAt: 6, error: null } };
+    await writeFile(statePath(dir), JSON.stringify(old));
+    const s = await loadState(dir);
+    expect(s).toMatchObject({ v: 1, rev: 2, cursors: {}, events: [], lastSync: { okAt: 5 } });
+    await saveState(s, dir);
+    s.cursors["/g"] = { offset: 2, size: 2, mtimeMs: 2 };
+    await saveState(s, dir);
+    expect((await loadState(dir)).cursors["/g"].offset).toBe(2); // not reset again
   });
 
   it("renames a corrupt file to .bak and starts fresh", async () => {

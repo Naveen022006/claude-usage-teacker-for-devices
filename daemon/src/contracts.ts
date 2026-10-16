@@ -44,6 +44,8 @@ export interface ScanResult {
 /** Persisted daemon state (~/.deskbuddy/claude-code-state.json). */
 export interface DaemonState {
   v: 1;
+  /** Migration revision. 2 = events are tagged by client (source "desktop" vs "claude-code"). Missing/older -> reset cursors+events once (rebackfill). */
+  rev?: number;
   cursors: Cursors;
   events: UsageEvent[]; // last 30 days, unique by id
   lastSync: { okAt: number | null; attemptAt: number | null; error: string | null };
@@ -53,6 +55,7 @@ export interface DaemonState {
 export interface DaemonConfig {
   deviceId: string;
   deviceName: string; // default `${hostname}-ClaudeCode`
+  desktopDeviceName: string; // default `${hostname}-Desktop` (Claude Desktop Code sessions, deviceId `${deviceId}-desktop`)
   deskbuddyUrl: string; // "" = sync disabled
   sharedToken: string;
   projectsDir: string; // default $CLAUDE_CONFIG_DIR/projects or ~/.claude/projects

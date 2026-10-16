@@ -10,6 +10,7 @@ you *which device* used it, or how many tokens each model consumed. So each clie
 to DeskBuddy, which adds it all up.
 
 Phase 1 (this folder) = **Chrome extension** for claude.ai.
+Phase 3 = the same daemon splits Claude Desktop Code sessions from terminal/VS Code usage (docs/10).
 Phase 2 (`daemon/`) = **deskbuddy-cc**, a Node daemon that reads Claude Code transcripts for exact token counts (see docs/09).
 
 ## Doc map
@@ -25,6 +26,7 @@ Phase 2 (`daemon/`) = **deskbuddy-cc**, a Node daemon that reads Claude Code tra
 | `docs/07-testing.md` | How to verify accuracy |
 | `docs/08-roadmap.md` | Phases: Chrome → Claude Code → Desktop app |
 | `docs/09-claude-code-daemon.md` | Phase 2: Node daemon that reports Claude Code token usage from local transcripts |
+| `docs/10-desktop-and-mock.md` | Phase 3: Desktop vs Code split per `entrypoint`; mock DeskBuddy server (`npm run mock`) |
 
 ## Ground rules
 - Read-only: never modify requests to claude.ai, never send prompts/responses anywhere.

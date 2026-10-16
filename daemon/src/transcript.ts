@@ -26,11 +26,13 @@ export function parseTranscriptLine(line: string, deviceId: string): UsageEvent 
 
   const cacheRead = num(usage.cache_read_input_tokens);
   const cacheCreate = num(usage.cache_creation_input_tokens);
+  // `entrypoint` on every line: "cli" | "claude-vscode" | "claude-desktop". Desktop gets its own source/device.
+  const desktop = obj.entrypoint === "claude-desktop";
   return {
     id: msg.id,
     ts,
-    source: "claude-code",
-    deviceId,
+    source: desktop ? "desktop" : "claude-code",
+    deviceId: desktop ? `${deviceId}-desktop` : deviceId,
     model,
     promptChars: 0,
     outputChars: 0,

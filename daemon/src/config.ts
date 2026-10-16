@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { DaemonConfig } from "./contracts";
 
 export function defaultDir(): string {
+  if (process.env.DESKBUDDY_HOME) return process.env.DESKBUDDY_HOME;
   return join(homedir(), ".deskbuddy");
 }
 export const configPath = (dir = defaultDir()) => join(dir, "claude-code.json");
@@ -19,6 +20,7 @@ export function defaultConfig(): DaemonConfig {
   return {
     deviceId: randomUUID(),
     deviceName: `${hostname()}-ClaudeCode`,
+    desktopDeviceName: `${hostname()}-Desktop`,
     deskbuddyUrl: "",
     sharedToken: "",
     projectsDir: defaultProjectsDir(),
@@ -28,7 +30,7 @@ export function defaultConfig(): DaemonConfig {
   };
 }
 
-const STRINGS = ["deviceId", "deviceName", "deskbuddyUrl", "sharedToken", "projectsDir"] as const;
+const STRINGS = ["deviceId", "deviceName", "desktopDeviceName", "deskbuddyUrl", "sharedToken", "projectsDir"] as const;
 const NUMBERS = ["scanIntervalSec", "heartbeatSec", "backfillDays"] as const;
 
 function merge(defaults: DaemonConfig, raw: unknown, warn: (m: string) => void): DaemonConfig {

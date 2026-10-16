@@ -1,5 +1,5 @@
 import { computeAggregates } from "../../src/shared/aggregate";
-import type { Aggregates, WindowAggregate } from "../../src/shared/types";
+import type { Aggregates, Report, Source, UsageEvent, WindowAggregate } from "../../src/shared/types";
 import { buildReport, normalizeBase, ping, sendReport } from "../../src/sync/deskbuddy";
 import { configPath, loadConfig, saveConfig, statePath } from "./config";
 import type { DaemonConfig, DaemonState } from "./contracts";
@@ -13,12 +13,12 @@ Usage: deskbuddy-cc [command] [options]
   run                 Watch transcripts and sync continuously (default)
   once [--dry-run]    Scan once, print totals, sync (or print the report with --dry-run)
   status              Show config, last sync and totals
-  config [--url U] [--name N] [--token T] [--projects-dir D]
+  config [--url U] [--name N] [--desktop-name N] [--token T] [--projects-dir D]
                       Save settings and print them
   ping                Check the DeskBuddy device is reachable
   --help              This text
 
-Env: DESKBUDDY_URL, DESKBUDDY_TOKEN override the config file; CLAUDE_CONFIG_DIR sets the projects dir.`;
+Env: DESKBUDDY_URL, DESKBUDDY_TOKEN override the config file; DESKBUDDY_HOME moves the ~/.deskbuddy dir; CLAUDE_CONFIG_DIR sets the projects dir.`;
 
 const ts = () => new Date().toTimeString().slice(0, 8);
 const log = (m: string) => console.log(`[${ts()}] ${m}`);
@@ -50,6 +50,35 @@ function printAggregates(a: Aggregates): void {
   printWindow("7d", a.last7d);
 }
 
+const SOURCES: { source: Source; label: string }[] = [
+  { source: "claude-code", label: "Claude Code (cli / VS Code)" },
+  { source: "desktop", label: "Claude Desktop (Code sessions)" },
+];
+
+/** One report per source that has events in the last 7 days. */
+function buildReports(cfg: DaemonConfig, events: UsageEvent[], now: number): Report[] {
+  const out: Report[] = [];
+  for (const { source } of SOURCES) {
+    const evs = events.filter((e) => e.source === source);
+    if (!evs.some((e) => e.ts >= now - 7 * 86400e3)) continue;
+    const device =
+      source === "desktop"
+        ? { deviceId: `${cfg.deviceId}-desktop`, deviceName: cfg.desktopDeviceName }
+        : { deviceId: cfg.deviceId, deviceName: cfg.deviceName };
+    out.push(buildReport(device, evs, null, now, { source, estimated: false }));
+  }
+  return out;
+}
+
+function printPerSource(events: UsageEvent[], now: number): void {
+  for (const { source, label } of SOURCES) {
+    const evs = events.filter((e) => e.source === source);
+    console.log(`
+[${label}] ${evs.length} events`);
+    if (evs.length) printAggregates(computeAggregates(evs, now));
+  }
+}
+
 async function scanInto(cfg: DaemonConfig, state: DaemonState, now = Date.now()): Promise<{ added: number; tokens: number }> {
   const res = await scan({
     projectsDir: cfg.projectsDir,
@@ -72,26 +101,22 @@ async function scanInto(cfg: DaemonConfig, state: DaemonState, now = Date.now())
 async function sync(cfg: DaemonConfig, state: DaemonState): Promise<boolean> {
   if (!cfg.deskbuddyUrl) return false;
   const now = Date.now();
-  const report = buildReport({ deviceId: cfg.deviceId, deviceName: cfg.deviceName }, state.events, null, now, {
-    source: "claude-code",
-    estimated: false,
-  });
   state.lastSync.attemptAt = now;
-  const r = await sendReport(cfg.deskbuddyUrl, cfg.sharedToken, report);
-  if (r.ok) {
-    state.lastSync.okAt = Date.now();
-    state.lastSync.error = null;
-  } else {
-    state.lastSync.error = r.error ?? "unknown error";
+  let error: string | null = null;
+  for (const report of buildReports(cfg, state.events, now)) {
+    const r = await sendReport(cfg.deskbuddyUrl, cfg.sharedToken, report);
+    if (!r.ok && error === null) error = `${report.source}: ${r.error ?? "unknown error"}`;
   }
+  if (error === null) state.lastSync.okAt = Date.now();
+  state.lastSync.error = error;
   await saveState(state);
-  return r.ok;
+  return error === null;
 }
 
 async function cmdRun(): Promise<void> {
   const cfg = await loadConfig();
   const state = await loadState();
-  log(`watching ${cfg.projectsDir} (every ${cfg.scanIntervalSec}s) as "${cfg.deviceName}"`);
+  log(`watching ${cfg.projectsDir} (every ${cfg.scanIntervalSec}s) as "${cfg.deviceName}" / "${cfg.desktopDeviceName}"`);
   if (!cfg.deskbuddyUrl) log("no DeskBuddy URL set - scanning only (run: deskbuddy-cc config --url http://deskbuddy.local)");
 
   let stopping = false;
@@ -153,13 +178,9 @@ async function cmdOnce(args: string[]): Promise<void> {
   const state = await loadState();
   const { added } = await scanInto(cfg, state);
   console.log(`Scanned ${cfg.projectsDir}: ${added} new replies, ${state.events.length} stored`);
-  printAggregates(computeAggregates(state.events, Date.now()));
+  printPerSource(state.events, Date.now());
   if (dry) {
-    const report = buildReport({ deviceId: cfg.deviceId, deviceName: cfg.deviceName }, state.events, null, Date.now(), {
-      source: "claude-code",
-      estimated: false,
-    });
-    console.log(JSON.stringify(report, null, 2));
+    for (const report of buildReports(cfg, state.events, Date.now())) console.log(JSON.stringify(report, null, 2));
     return;
   }
   if (!cfg.deskbuddyUrl) {
@@ -177,6 +198,7 @@ async function cmdStatus(): Promise<void> {
   console.log(`Config:       ${configPath()}`);
   console.log(`State:        ${statePath()}`);
   console.log(`Device:       ${cfg.deviceName} (${cfg.deviceId})`);
+  console.log(`Desktop:      ${cfg.desktopDeviceName} (${cfg.deviceId}-desktop)`);
   console.log(`DeskBuddy:    ${cfg.deskbuddyUrl ? normalizeBase(cfg.deskbuddyUrl) : "(not set)"}`);
   console.log(`Token:        ${mask(cfg.sharedToken)}`);
   console.log(`Projects dir: ${cfg.projectsDir}`);
@@ -184,17 +206,19 @@ async function cmdStatus(): Promise<void> {
   const l = state.lastSync;
   console.log(`Last sync:    ${l.okAt ? new Date(l.okAt).toLocaleString() : "never"}${l.error ? ` (last error: ${l.error})` : ""}`);
   console.log(`Events:       ${state.events.length} stored, ${Object.keys(state.cursors).length} files tracked`);
-  printAggregates(computeAggregates(state.events, Date.now()));
+  printPerSource(state.events, Date.now());
 }
 
 async function cmdConfig(args: string[]): Promise<void> {
   const partial: Partial<DaemonConfig> = {};
   const url = flag(args, "--url");
   const name = flag(args, "--name");
+  const desktopName = flag(args, "--desktop-name");
   const token = flag(args, "--token");
   const dir = flag(args, "--projects-dir");
   if (url !== undefined) partial.deskbuddyUrl = url;
   if (name !== undefined) partial.deviceName = name;
+  if (desktopName !== undefined) partial.desktopDeviceName = desktopName;
   if (token !== undefined) partial.sharedToken = token;
   if (dir !== undefined) partial.projectsDir = dir;
   await loadConfig(); // ensure first-run defaults exist

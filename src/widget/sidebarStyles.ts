@@ -39,6 +39,12 @@ export const SIDEBAR_CSS = `
 .sb-diag { color: var(--muted); font-size: 11.5px; line-height: 1.35; margin-top: 2px; overflow-wrap: anywhere; }
 .sb-diag.cut { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
 .sb-link { background: none; border: 0; padding: 0; color: var(--blue); text-decoration: underline; text-align: left; }
+.sb-row.attr { grid-template-columns: minmax(0, 1fr) 3em 3em 4.4em; }
+.sb-row.attr .sb-pts { color: var(--blue); text-align: right; white-space: nowrap; }
+.sb-row.attr .tk { color: var(--muted); text-align: right; white-space: nowrap; font-size: 12.5px; }
+.sb-row.attr.other .sb-lbl, .sb-row.attr.other .sb-pts { color: var(--muted); }
+.sb-sub.sb-cols { display: grid; grid-template-columns: minmax(0, 1fr) 3em 3em 4.4em; column-gap: 8px; font-size: 12px; }
+.sb-sub.sb-cols .c { text-align: right; font-size: 11.5px; }
 .sb-sub { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
 .sb-switch { display: inline-flex; align-items: baseline; gap: 5px; }
 .sb-switch button { background: none; border: 0; padding: 0 1px; color: var(--muted); font-size: 12.5px; }

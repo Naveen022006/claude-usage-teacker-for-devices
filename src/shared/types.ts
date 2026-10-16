@@ -1,6 +1,8 @@
 // Shared data model — see docs/03-data-model.md and docs/04-device-sync.md.
 // Nothing in here may ever hold message text.
 
+import type { Ledger } from "./attribution";
+
 export type Source = "chrome" | "claude-code" | "desktop";
 export type EventStatus = "ok" | "error" | "aborted";
 export type EventKind = "new" | "retry";
@@ -133,6 +135,7 @@ export interface StorageShape {
   captureDiag: CaptureDiag | null;
   swDiag: SwDiag;
   usageDiag: UsageDiag | null;
+  limitLedger: Ledger;
 }
 
 /** POST /api/report body — docs/04-device-sync.md. Keep `v` versioned. */

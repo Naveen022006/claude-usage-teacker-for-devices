@@ -248,6 +248,11 @@ $("diagReset").addEventListener("click", async () => {
   if (res.ok) renderDiag(res.data);
 });
 
+$("attrReset").addEventListener("click", async () => {
+  const res = await callSw({ type: "reset-attribution" });
+  setStatus(res.ok ? "Model attribution reset." : "Reset failed: " + res.error, res.ok ? "ok" : "bad");
+});
+
 void loadDiag();
 setInterval(() => {
   if (!document.hidden) void loadDiag();

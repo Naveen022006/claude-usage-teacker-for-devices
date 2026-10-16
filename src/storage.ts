@@ -1,3 +1,5 @@
+import { emptyLedger } from "./shared/attribution";
+import type { Ledger } from "./shared/attribution";
 import { DEFAULT_SETTINGS, DEFAULT_SW_DIAG, DEFAULT_SYNC_STATE, type DeviceInfo, type StorageShape } from "./shared/types";
 
 type Defaulted = Exclude<keyof StorageShape, "device">;
@@ -12,6 +14,7 @@ const DEFAULTS: { [K in Defaulted]: StorageShape[K] } = {
   captureDiag: null,
   swDiag: DEFAULT_SW_DIAG,
   usageDiag: null,
+  limitLedger: emptyLedger(),
 };
 
 /** Pre-pivot settings used deskbuddyUrl / sharedToken. Rename once, drop the old LAN default. */
@@ -49,6 +52,19 @@ export async function ensureDevice(): Promise<DeviceInfo> {
   const fresh: DeviceInfo = { deviceId: crypto.randomUUID(), deviceName: "Chrome" };
   await set({ device: fresh });
   return fresh;
+}
+
+let ledgerChain: Promise<unknown> = Promise.resolve();
+/** Serialises read-modify-write on `limitLedger`. */
+export function mutateLedger(fn: (l: Ledger) => Ledger): Promise<Ledger> {
+  const run = ledgerChain.then(async () => {
+    const cur = { ...emptyLedger(), ...(await get("limitLedger")) };
+    const next = fn(cur);
+    if (next !== cur) await set({ limitLedger: next });
+    return next;
+  });
+  ledgerChain = run.catch(() => undefined);
+  return run;
 }
 
 let chain: Promise<unknown> = Promise.resolve();

@@ -2,6 +2,7 @@
 // the SW may be killed at any time, which is fine because every report is a full snapshot.
 
 import { clampCharsPerToken, estimateTokens } from "./capture/tokens";
+import { addContribution, applyReading, attributionView, emptyLedger, recordHubSnapshot, replyWeight } from "./shared/attribution";
 import { computeAggregates, pruneEvents } from "./shared/aggregate";
 import {
   NS,
@@ -22,7 +23,8 @@ import { buildReport, fetchHubState, normalizeBase, ping, sendReport } from "./s
 
 const HEARTBEAT = "heartbeat";
 const SYNC_DEBOUNCE_MS = 3000;
-const USAGE_POLL_MS = 5 * 60_000;
+const USAGE_POLL_MS = 55_000; // heartbeat is 1 min, so effectively every 1-2 min while a claude.ai tab is open
+const READING_DELAYS_MS = [4_000, 20_000]; // extra account-usage readings after each reply
 
 let syncTimer: ReturnType<typeof setTimeout> | undefined;
 let lastUsageAttempt = 0;
@@ -65,7 +67,37 @@ async function pollAccountUsage(): Promise<void> {
   if (!tabs.length) return;
   lastUsageAttempt = now;
   const usage = await fetchAccountUsage(orgId, recordUsageDiag);
-  if (usage) await store.set({ accountUsage: usage });
+  if (usage) await storeUsage(usage);
+}
+
+/** Stores a fresh account-usage reading and feeds it to the per-model attribution ledger. */
+async function storeUsage(usage: NonNullable<WidgetState["accountUsage"]>): Promise<void> {
+  await store.set({ accountUsage: usage });
+  try {
+    await store.mutateLedger((l) => applyReading(l, usage, usage.fetchedAt));
+  } catch (e) {
+    console.warn("[claude-usage] attribution failed", e);
+  }
+}
+
+let readingTimers: ReturnType<typeof setTimeout>[] = [];
+/** After a reply (or hub activity) read the account usage again at +4 s and +20 s so the change is attributed to it. */
+function scheduleReadings(): void {
+  for (const t of readingTimers) clearTimeout(t);
+  readingTimers = READING_DELAYS_MS.map((d) => setTimeout(() => void readingNow().catch((e) => console.warn("[claude-usage] reading failed", e)), d));
+}
+
+async function readingNow(): Promise<void> {
+  const [settings, orgId] = await Promise.all([store.get("settings"), store.get("orgId")]);
+  if (!settings.pollAccountUsage || !orgId) return;
+  const tabs = await chrome.tabs.query({ url: "https://claude.ai/*" });
+  if (!tabs.length) return;
+  lastUsageAttempt = Date.now();
+  const usage = await fetchAccountUsage(orgId, recordUsageDiag);
+  if (usage) {
+    await storeUsage(usage);
+    void broadcastStateChanged();
+  }
 }
 
 // ---- messages ----
@@ -152,6 +184,13 @@ async function handlePage(m: PageMessage): Promise<void> {
       });
       void bumpSwDiag({ eventsStored: 1 });
       if (isNew) {
+        try {
+          const w = replyWeight(ev.model, ev.promptTokens, ev.outputTokens);
+          await store.mutateLedger((l) => addContribution(l, { model: ev.model, weight: w, ts: Date.now(), source: "chrome" }));
+          scheduleReadings();
+        } catch (e) {
+          console.warn("[claude-usage] attribution contribution failed", e);
+        }
         const s = await store.get("syncState");
         await store.set({ syncState: { ...s, queue: s.queue + 1 } });
       }
@@ -189,6 +228,26 @@ const WIDGET_USAGE_MIN_GAP_MS = 60_000;
 let hubCache: { key: string; at: number; result: HubStateResult } | null = null;
 let lastWidgetUsageAttempt = 0;
 
+/** Diffs hub devices' 5h token totals against the previous snapshot; positive deltas become attribution contributions. */
+async function recordHub(devices: HubStateResult["devices"]): Promise<void> {
+  try {
+    const lite = devices.map((d) => ({
+      deviceId: d.deviceId,
+      source: d.source,
+      last5hByModel: Object.fromEntries(Object.entries(d.windows.last5h.byModel).map(([m, v]) => [m, v.tokens])),
+    }));
+    let added = 0;
+    await store.mutateLedger((l) => {
+      const r = recordHubSnapshot(l, lite, Date.now());
+      added = r.added;
+      return r.ledger;
+    });
+    if (added > 0) scheduleReadings();
+  } catch (e) {
+    console.warn("[claude-usage] hub attribution failed", e);
+  }
+}
+
 async function getHubState(settings: Settings): Promise<WidgetState["hub"]> {
   const none = { configured: false, ok: false, fetchedAt: 0, devices: [] };
   if (!settings.hubUrl.trim()) return none;
@@ -202,6 +261,7 @@ async function getHubState(settings: Settings): Promise<WidgetState["hub"]> {
   if (!hubCache || hubCache.key !== key || now - hubCache.at > HUB_CACHE_MS) {
     const result = await fetchHubState(settings.hubUrl, settings.hubToken);
     hubCache = { key, at: now, result };
+    if (result.ok) void recordHub(result.devices);
   }
   const r = hubCache.result;
   return { configured: true, ok: r.ok, error: r.error, fetchedAt: r.fetchedAt, devices: r.devices };
@@ -217,7 +277,7 @@ function maybeRefreshUsageForWidget(settings: Settings, orgId: string | null, us
   void fetchAccountUsage(orgId, recordUsageDiag)
     .then(async (u) => {
       if (u) {
-        await store.set({ accountUsage: u });
+        await storeUsage(u);
         void broadcastStateChanged();
       }
     })
@@ -286,7 +346,7 @@ async function handleWidget(type: "get-widget-state" | "open-options", orgHint?:
       await chrome.runtime.openOptionsPage();
       return { ok: true, data: null };
     }
-    const [device, settings, syncState, accountUsage, events, orgId, captureDiag, swDiag, limitHint] = await Promise.all([
+    const [device, settings, syncState, accountUsage, events, orgId, captureDiag, swDiag, limitHint, ledger] = await Promise.all([
       store.ensureDevice(),
       store.get("settings"),
       store.get("syncState"),
@@ -296,6 +356,7 @@ async function handleWidget(type: "get-widget-state" | "open-options", orgHint?:
       store.get("captureDiag"),
       store.get("swDiag"),
       store.get("limitHint"),
+      store.get("limitLedger"),
     ]);
     let org = orgId;
     let learned = false;
@@ -314,16 +375,18 @@ async function handleWidget(type: "get-widget-state" | "open-options", orgHint?:
     const plan = await store.get("plan");
     if (!plan) void refreshPlan(org, orgHint); // rate-limited to once per 6 h; broadcasts state-changed when learned
     const now = Date.now();
+    const hub = await getHubState(settings); // may record hub contributions into the ledger
     const state: WidgetState = {
       device,
       aggregates: computeAggregates(events, now),
       accountUsage,
+      attribution: attributionView({ ...emptyLedger(), ...ledger }),
       plan,
       limitHint,
       syncState,
       showWidget: settings.showWidget,
       codeDeviceIds: sanitizeDeviceIds(settings.codeDeviceIds) ?? [],
-      hub: await getHubState(settings),
+      hub,
       now,
       captureDiag,
       swDiag,
@@ -459,6 +522,10 @@ async function handleUi(req: UiRequest): Promise<UiResponse> {
         await swDiagChain;
         await store.set({ captureDiag: null, swDiag: { ...DEFAULT_SW_DIAG }, usageDiag: null });
         return ok<"reset-diag">({ page: null, sw: { ...DEFAULT_SW_DIAG }, usage: null });
+      case "reset-attribution":
+        await store.mutateLedger(() => emptyLedger());
+        void broadcastStateChanged();
+        return ok<"reset-attribution">(null);
       case "export-data": {
         const [device, settings, events, accountUsage] = await Promise.all([
           store.ensureDevice(),
@@ -471,6 +538,7 @@ async function handleUi(req: UiRequest): Promise<UiResponse> {
       }
       case "clear-data": {
         await store.mutateEvents(() => []);
+        await store.mutateLedger(() => emptyLedger());
         await store.set({ accountUsage: null, limitHint: null, syncState: { ...DEFAULT_SYNC_STATE } });
         return ok<"clear-data">(await buildState());
       }

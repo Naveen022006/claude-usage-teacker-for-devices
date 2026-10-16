@@ -75,10 +75,11 @@
     var state = {
       device: { deviceId: "me", deviceName: "Chrome" }, aggregates: windows(1),
       accountUsage: { fetchedAt: now, windows: [
-        { name: "five_hour", utilization: 2, resetsAt: new Date(now + 295 * min + 20000).toISOString() },
-        { name: "seven_day", utilization: 0, resetsAt: new Date(now + 3 * 86400000 + 20000).toISOString() } ].concat(q.get("extra") === "1" ? [
+        { name: "five_hour", utilization: 79, resetsAt: new Date(now + 295 * min + 20000).toISOString() },
+        { name: "seven_day", utilization: 11, resetsAt: new Date(now + 3 * 86400000 + 20000).toISOString() } ].concat(q.get("extra") === "1" ? [
         { name: "seven_day_opus", utilization: 92, resetsAt: new Date(now + 2 * 86400000).toISOString() },
         { name: "seven_day_sonnet", utilization: 83, resetsAt: new Date(now + 5 * 86400000).toISOString() } ] : []) },
+      attribution: { five_hour: { byModel: { "claude-opus-4-5": 52, "claude-sonnet-5-5": 19 }, other: 8 }, seven_day: { byModel: { "claude-opus-4-5": 7, "claude-sonnet-5-5": 3 }, other: 1 } },
       syncState: { lastOkAt: now - 20000, lastAttemptAt: now, lastError: null, queue: 0 }, showWidget: true, codeDeviceIds: [], now: now,
       captureDiag: { updatedAt: now, hookInstalled: true, fetchCalls: 42, streamsSeen: 3, emptyStreams: 0, eventsPosted: 0, observations: [{ at: now, pathPattern: "/api/organizations/:id/chat_conversations/:id/completion", contentType: "text/event-stream", status: 200, matchedRegex: true, eventTypes: ["message_start", "content_block_start", "content_block_delta", "message_delta", "message_stop"], recorded: false }] },
       swDiag: { eventsReceived: 0, eventsRejected: 0, lastRejectReason: null, eventsStored: 0 },

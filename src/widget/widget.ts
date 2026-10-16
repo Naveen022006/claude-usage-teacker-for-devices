@@ -24,6 +24,7 @@ import {
   formatTokens,
   humanizeWindow,
   mergeDevices,
+  attributionRows,
   modelRows,
   pillLabel,
   sbTone,
@@ -93,10 +94,6 @@ const icon = (paths: string[], size = 16): SVGElement =>
     ...paths.map((d) => svg("path", { d })),
   );
 
-const GEAR = [
-  "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
-  "M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z",
-];
 const CLOCK = ["M12 21a8 8 0 1 0 0-16 8 8 0 0 0 0 16z", "M12 9v4l2 2", "M10 2h4"];
 const MINIMIZE = ["M6 9l6 6 6-6"];
 const CHEVRON = ["M9 6l6 6-6 6"];
@@ -501,9 +498,7 @@ class Widget {
       this.savePrefs();
       this.render();
     });
-    const gear = h("button", { class: "icon-btn", type: "button", "aria-label": "Open settings", title: "Settings", "data-fk": "sb-gear" }, icon(GEAR, 14));
-    gear.addEventListener("click", () => void request("open-options"));
-    box.append(h("div", { class: "sb-head" }, toggle, gear), ...this.sbPlanRows(s, open));
+    box.append(h("div", { class: "sb-head" }, toggle), ...this.sbPlanRows(s, open));
     if (open) box.append(...this.sbModels(s));
     return box;
   }
@@ -575,7 +570,42 @@ class Widget {
     return wrapEl;
   }
 
+  /** Pro/Max: points of the 5h and weekly limits per model (estimated from usage changes), tokens muted on the right. */
+  private sbAttribution(s: WidgetState): HTMLElement[] {
+    const out: HTMLElement[] = [
+      h("div", { class: "sb-sub sb-cols", title: "≈ attributed from changes in your plan usage after each reply" }, h("span", {}, "Models"), h("span", { class: "c" }, "5h"), h("span", { class: "c" }, "Week"), h("span", { class: "c" }, "Tokens")),
+    ];
+    const tokens: Record<string, number> = {};
+    let estimated = true;
+    const add = (byModel: WindowAggregate["byModel"]) => {
+      for (const [m, v] of Object.entries(byModel)) tokens[m] = (tokens[m] ?? 0) + (v?.tokens || 0);
+    };
+    if (this.mode === "chat") add(s.aggregates.last5h.byModel);
+    if (s.hub.configured && s.hub.ok) {
+      const own = s.device.deviceId;
+      const devs = this.mode === "chat" ? s.hub.devices.filter((d) => d.deviceId !== own) : combineDevices(s.hub.devices, s.codeDeviceIds ?? [], true).devices;
+      for (const d of devs) {
+        add(d.windows.last5h.byModel);
+        if (d.estimated) estimated = true;
+      }
+      if (this.mode !== "chat") estimated = devs.some((d) => d.estimated) || !devs.length;
+    }
+    const view = attributionRows(s.attribution?.five_hour, s.attribution?.seven_day, tokens, estimated);
+    const line = (v: { label: string; five: string; week: string; tokens: string; title: string; bar: number }, muted: boolean): HTMLElement => {
+      const row = h("div", { class: `sb-row attr${muted ? " other" : ""}` }, h("span", { class: "sb-lbl", title: v.label }, v.label), h("span", { class: "sb-pts" }, v.five), h("span", { class: "sb-pts" }, v.week), h("span", { class: "tk" }, v.tokens));
+      const bar = muted ? null : h("div", { class: "sb-bar", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(v.bar)), "aria-label": v.label.replace(/:$/, "") }, h("div", { class: "sb-fill", style: `width:${v.bar}%` }));
+      return h("div", { class: "sb-item", title: v.title }, row, bar);
+    };
+    for (const r of view.rows.slice(0, MAX_MODEL_ROWS)) out.push(line(r, false));
+    if (view.rows.length > MAX_MODEL_ROWS) out.push(h("div", { class: "sb-none" }, `+${view.rows.length - MAX_MODEL_ROWS} more`));
+    out.push(line(view.other, true));
+    return out;
+  }
+
   private sbModels(s: WidgetState): HTMLElement[] {
+    const ws = s.accountUsage?.windows ?? [];
+    const attributed = s.plan !== "free" && ws.some((w) => w.name === "five_hour" || w.name === "seven_day");
+    if (attributed) return this.sbAttribution(s);
     const out: HTMLElement[] = [h("div", { class: "sb-sub" }, h("span", {}, "Models"), this.sbSwitch())];
     let agg: WindowAggregate;
     let estimated: boolean;
@@ -649,12 +679,10 @@ class Widget {
 
     // header
     const dot = h("span", { class: `dot ${this.syncTone(s)}`, role: "img", "aria-label": this.syncLabel(s), title: this.syncLabel(s) });
-    const gear = h("button", { class: "icon-btn", type: "button", "aria-label": "Open settings", title: "Settings", "data-fk": "gear" }, icon(GEAR));
-    gear.addEventListener("click", () => void request("open-options"));
     const min = h("button", { class: "icon-btn", type: "button", "aria-label": "Minimize", title: "Minimize (Esc)", "data-fk": "min" }, icon(MINIMIZE));
     min.addEventListener("click", () => this.setExpanded(false));
     const title = h("div", { class: "title" }, h("span", {}, "Claude usage"), dot);
-    const header = h("header", { class: "head" }, title, h("div", { class: "head-actions" }, gear, min));
+    const header = h("header", { class: "head" }, title, h("div", { class: "head-actions" }, min));
     this.makeDraggable(title);
     panel.append(header);
 

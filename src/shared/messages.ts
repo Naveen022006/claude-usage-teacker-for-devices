@@ -4,6 +4,7 @@
 //   bridge.ts --chrome.runtime.sendMessage(PageMessage)--> sw.ts
 //   popup/options --chrome.runtime.sendMessage(UiRequest)--> sw.ts (responds via sendResponse)
 
+import type { AttributionView } from "./attribution";
 import type {
   Aggregates,
   AccountUsage,
@@ -68,6 +69,8 @@ export interface WidgetState {
   plan: Plan | null;
   /** Latest message_limit hint seen in a completion stream (Free accounts have no usage endpoint). */
   limitHint: LimitHint | null;
+  /** Per-model plan-limit points (estimates), account-wide. */
+  attribution: AttributionView;
   syncState: SyncState;
   showWidget: boolean;
   codeDeviceIds: string[];
@@ -87,6 +90,7 @@ export type UiRequest =
   | { type: "sync-now" }
   | { type: "get-diag" }
   | { type: "reset-diag" }
+  | { type: "reset-attribution" }
   | { type: "export-data" }
   | { type: "clear-data" };
 
@@ -110,6 +114,7 @@ export interface UiResponseData {
   "sync-now": SyncState;
   "get-diag": { page: CaptureDiag | null; sw: SwDiag; usage: UsageDiag | null };
   "reset-diag": { page: CaptureDiag | null; sw: SwDiag; usage: UsageDiag | null };
+  "reset-attribution": null;
   "export-data": { json: string };
   "clear-data": UiState;
 }

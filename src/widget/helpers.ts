@@ -470,3 +470,69 @@ export function planRows(
   const allNone = rows.every((r) => r.kind === "none");
   return { rows, hint: allNone ? "Updates after your next message" : null };
 }
+
+// ---- per-model limit attribution rows (percentage points of the 5h / weekly limits) ----
+
+/** "52%", "<1%" for 0 < x < 0.5, "0%" for nothing. */
+export function formatPoints(x: number): string {
+  if (!Number.isFinite(x) || x <= 0) return "0%";
+  if (x < 0.5) return "<1%";
+  return `${Math.round(x)}%`;
+}
+
+export interface AttrRowView {
+  label: string; // "Opus 4.5:"
+  p5: number;
+  pw: number;
+  five: string;
+  week: string;
+  tokens: string; // "≈6.1k", "" when none
+  title: string;
+  bar: number; // 0–100 (5h points)
+}
+
+export interface AttrView {
+  rows: AttrRowView[];
+  other: AttrRowView;
+}
+
+const EXPLAIN = "≈ attributed from changes in your plan usage after each reply";
+
+/**
+ * Merges models (by pretty label, so dated ids collapse), sorts by 5h points desc.
+ * `tokens` = last-5h tokens per raw model id. Models with no points and no tokens are dropped.
+ */
+export function attributionRows(
+  five: { byModel: Record<string, number>; other: number } | undefined,
+  week: { byModel: Record<string, number>; other: number } | undefined,
+  tokens: Record<string, number>,
+  estimated: boolean,
+): AttrView {
+  const acc = new Map<string, { p5: number; pw: number; tk: number }>();
+  const slot = (id: string) => {
+    const label = prettyModel(id);
+    let s = acc.get(label);
+    if (!s) acc.set(label, (s = { p5: 0, pw: 0, tk: 0 }));
+    return s;
+  };
+  for (const [m, v] of Object.entries(five?.byModel ?? {})) slot(m).p5 += v;
+  for (const [m, v] of Object.entries(week?.byModel ?? {})) slot(m).pw += v;
+  for (const [m, v] of Object.entries(tokens)) if (v > 0) slot(m).tk += v;
+  const mk = (label: string, p5: number, pw: number, tk: number, extra: string): AttrRowView => ({
+    label: `${label}:`,
+    p5,
+    pw,
+    five: formatPoints(p5),
+    week: formatPoints(pw),
+    tokens: tk > 0 ? `${estimated ? "≈" : ""}${formatTokens(tk)}` : "",
+    title: `${label} · ${formatPoints(p5)} of the 5h limit · ${formatPoints(pw)} of the weekly limit${tk > 0 ? ` · ${estimated ? "≈" : ""}${formatTokens(tk)} tokens in the last 5h` : ""}. ${extra}${EXPLAIN}`,
+    bar: clampPct(p5),
+  });
+  const rows = [...acc.entries()]
+    .filter(([, s]) => s.p5 > 0 || s.pw > 0 || s.tk > 0)
+    .sort((a, b) => b[1].p5 - a[1].p5 || b[1].pw - a[1].pw || b[1].tk - a[1].tk || a[0].localeCompare(b[0]))
+    .map(([label, s]) => mk(label, s.p5, s.pw, s.tk, ""));
+  const other = mk("Other", five?.other ?? 0, week?.other ?? 0, 0, "Other devices, mobile, and usage from before tracking started. ");
+  other.title = `Other · ${other.five} of the 5h limit · ${other.week} of the weekly limit. Other devices, mobile, and usage from before tracking started. ${EXPLAIN}`;
+  return { rows, other };
+}

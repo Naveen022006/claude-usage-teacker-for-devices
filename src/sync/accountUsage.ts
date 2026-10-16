@@ -29,6 +29,35 @@ function readWindow(name: string, o: Record<string, unknown>): { name: string; r
   return { name: canonName(name).slice(0, 64), raw, ...(iso ? { resetsAt: iso } : {}) };
 }
 
+/**
+ * Newer shape: `limits: [{ kind, percent, resets_at, scope? }]`, where kind is "session", "weekly_all" or
+ * "weekly_scoped" (scope.model.display_name names the model). Read first so it wins over the older top-level
+ * five_hour / seven_day fields. Returns whether any entry had a `kind`.
+ */
+function collectKindLimits(list: unknown, out: { name: string; raw: number; resetsAt?: string }[]): boolean {
+  if (!Array.isArray(list)) return false;
+  let sawKind = false;
+  for (const it of list) {
+    if (!isObj(it) || typeof it.kind !== "string") continue;
+    sawKind = true;
+    let name: string;
+    if (it.kind === "weekly_all") name = "seven_day";
+    else if (it.kind === "weekly_scoped") {
+      const scope = isObj(it.scope) ? it.scope : null;
+      const model = scope && isObj(scope.model) ? scope.model.display_name : null;
+      const m = typeof model === "string" ? model.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 32) : "";
+      if (!m) {
+        console.warn("[claude-usage] weekly_scoped limit without a model name");
+        continue;
+      }
+      name = `seven_day_${m}`;
+    } else name = it.kind;
+    const w = readWindow(name, it);
+    if (w) out.push(w);
+  }
+  return sawKind;
+}
+
 function collect(container: unknown, out: { name: string; raw: number; resetsAt?: string }[]): void {
   if (Array.isArray(container)) {
     for (const it of container) {
@@ -53,8 +82,9 @@ export function parseAccountUsage(json: unknown, now = Date.now()): AccountUsage
   try {
     if (typeof json !== "object" || json === null) return null;
     const found: { name: string; raw: number; resetsAt?: string }[] = [];
+    const kindLimits = isObj(json) && collectKindLimits(json.limits, found);
     collect(json, found);
-    if (isObj(json)) for (const k of CONTAINER_KEYS) if (k in json) collect(json[k], found);
+    if (isObj(json)) for (const k of CONTAINER_KEYS) if (k in json && !(k === "limits" && kindLimits)) collect(json[k], found);
     if (!found.length) return null;
     const fractions = found.every((f) => f.raw <= 1) && found.some((f) => f.raw > 0 && f.raw < 1);
     const seen = new Set<string>();

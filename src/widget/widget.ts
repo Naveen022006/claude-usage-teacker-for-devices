@@ -109,6 +109,7 @@ const PLAN_LABELS: Record<string, string> = {
   seven_day: "Weekly:",
   seven_day_opus: "Weekly Opus:",
   seven_day_sonnet: "Weekly Sonnet:",
+  seven_day_fable: "Weekly Fable:",
 };
 const SB_WINDOWS: { id: TabId; label: string }[] = [
   { id: "session", label: "5h" },

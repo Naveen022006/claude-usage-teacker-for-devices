@@ -25,6 +25,35 @@ describe("parseAccountUsage variants", () => {
   it("rate_limits array with 5h / 7d names", () => {
     expect(names({ rate_limits: [{ window: "5h", utilization: 30, resets_at: R }, { window: "7d", utilization: 40 }] })).toEqual([["five_hour", 30], ["seven_day", 40]]);
   });
+  it("limits list with kind / percent / scope.model", () => {
+    const j = {
+      five_hour: null,
+      seven_day: null,
+      limits: [
+        { kind: "session", percent: 42, resets_at: R },
+        { kind: "weekly_all", percent: 11, resets_at: R },
+        { kind: "weekly_scoped", percent: 7, resets_at: R, scope: { model: { display_name: "Opus" } } },
+        { kind: "weekly_scoped", percent: 3, scope: { model: { display_name: "Fable" } } },
+      ],
+    };
+    expect(parseAccountUsage(j, NOW)?.windows).toEqual([
+      { name: "five_hour", utilization: 42, resetsAt: R },
+      { name: "seven_day", utilization: 11, resetsAt: R },
+      { name: "seven_day_opus", utilization: 7, resetsAt: R },
+      { name: "seven_day_fable", utilization: 3 },
+    ]);
+  });
+  it("limits list wins over the older top-level fields; scoped limit without a model is skipped", () => {
+    const j = {
+      five_hour: { utilization: 99, resets_at: R },
+      seven_day_sonnet: { utilization: 5 },
+      limits: [{ kind: "session", percent: 40, id: "x1" }, { kind: "weekly_scoped", percent: 9, scope: {} }],
+    };
+    expect(names(j)).toEqual([["five_hour", 40], ["seven_day_sonnet", 5]]);
+  });
+  it("empty limits list (free plan) falls back to null", () => {
+    expect(parseAccountUsage({ five_hour: null, seven_day: null, limits: [] }, NOW)).toBeNull();
+  });
   it("0-1 fractions become percentages; 0-100 untouched", () => {
     expect(names({ five_hour: { utilization: 0.42 }, seven_day: { utilization: 1 } })).toEqual([["five_hour", 42], ["seven_day", 100]]);
     expect(names({ five_hour: { utilization: 1 }, seven_day: { utilization: 55 } })).toEqual([["five_hour", 1], ["seven_day", 55]]);

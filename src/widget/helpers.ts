@@ -30,6 +30,7 @@ const WINDOW_LABELS: Record<string, string> = {
   seven_day: "Weekly · all models",
   seven_day_opus: "Weekly · Opus",
   seven_day_sonnet: "Weekly · Sonnet",
+  seven_day_fable: "Weekly · Fable",
 };
 
 export function humanizeWindow(name: string): string {

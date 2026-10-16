@@ -1,0 +1,256 @@
+// Background service worker. Listeners are registered at top level (MV3 requirement);
+// the SW may be killed at any time, which is fine because every report is a full snapshot.
+
+import { clampCharsPerToken, estimateTokens } from "./capture/tokens";
+import { computeAggregates, pruneEvents } from "./shared/aggregate";
+import type { PageMessage, UiRequest, UiResponse, UiResponseData, UiState } from "./shared/messages";
+import { DEFAULT_SYNC_STATE, type Settings, type SyncState, type UsageEvent } from "./shared/types";
+import { validatePageMessage } from "./shared/validate";
+import * as store from "./storage";
+import { fetchAccountUsage } from "./sync/accountUsage";
+import { buildReport, normalizeBase, ping, sendReport } from "./sync/deskbuddy";
+
+const HEARTBEAT = "heartbeat";
+const SYNC_DEBOUNCE_MS = 3000;
+const USAGE_POLL_MS = 5 * 60_000;
+
+let syncTimer: ReturnType<typeof setTimeout> | undefined;
+let lastUsageAttempt = 0;
+
+async function setup(): Promise<void> {
+  await store.ensureDevice();
+  await chrome.alarms.create(HEARTBEAT, { periodInMinutes: 1 });
+}
+chrome.runtime.onInstalled.addListener(() => void setup());
+chrome.runtime.onStartup.addListener(() => void setup());
+
+chrome.alarms.onAlarm.addListener((a) => {
+  if (a.name !== HEARTBEAT) return;
+  void heartbeat();
+});
+
+async function heartbeat(): Promise<void> {
+  try {
+    await pollAccountUsage();
+  } catch (e) {
+    console.warn("[deskbuddy] usage poll failed", e);
+  }
+  await syncNow();
+}
+
+async function pollAccountUsage(): Promise<void> {
+  const [settings, orgId, current] = await Promise.all([
+    store.get("settings"),
+    store.get("orgId"),
+    store.get("accountUsage"),
+  ]);
+  if (!settings.pollAccountUsage || !orgId) return;
+  const now = Date.now();
+  if (now - Math.max(current?.fetchedAt ?? 0, lastUsageAttempt) < USAGE_POLL_MS) return;
+  const tabs = await chrome.tabs.query({ url: "https://claude.ai/*" });
+  if (!tabs.length) return;
+  lastUsageAttempt = now;
+  const usage = await fetchAccountUsage(orgId);
+  if (usage) await store.set({ accountUsage: usage });
+}
+
+// ---- messages ----
+
+chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
+  if (sender.tab) {
+    if (sender.url?.startsWith("https://claude.ai/")) {
+      const m = validatePageMessage(msg);
+      if (m) void handlePage(m).catch((e) => console.warn("[deskbuddy] page message failed", e));
+    }
+    return false; // content scripts never get a response
+  }
+  if (sender.id !== chrome.runtime.id) return false;
+  handleUi(msg as UiRequest).then(sendResponse, (e) =>
+    sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }),
+  );
+  return true;
+});
+
+async function handlePage(m: PageMessage): Promise<void> {
+  switch (m.type) {
+    case "usage-event": {
+      const [device, settings] = await Promise.all([store.ensureDevice(), store.get("settings")]);
+      const c = m.payload;
+      const cpt = settings.charsPerToken;
+      const ev: UsageEvent = {
+        id: c.id,
+        ts: c.ts,
+        source: "chrome",
+        deviceId: device.deviceId,
+        model: c.model,
+        promptChars: c.promptChars,
+        outputChars: c.outputChars,
+        thinkingChars: c.thinkingChars,
+        promptTokens: estimateTokens(c.promptChars, cpt),
+        outputTokens: estimateTokens(c.outputChars + c.thinkingChars, cpt),
+        estimated: true,
+        status: c.status,
+        kind: c.kind,
+      };
+      let isNew = true;
+      await store.mutateEvents((events) => {
+        const i = events.findIndex((e) => e.id === ev.id);
+        const next = events.slice();
+        if (i >= 0) {
+          isNew = false;
+          next[i] = ev; // retry/duplicate post with the same id replaces
+        } else next.push(ev);
+        return pruneEvents(next, Date.now());
+      });
+      if (isNew) {
+        const s = await store.get("syncState");
+        await store.set({ syncState: { ...s, queue: s.queue + 1 } });
+      }
+      scheduleSync();
+      return;
+    }
+    case "org-seen":
+      await store.set({ orgId: m.payload.orgId });
+      return;
+    case "limit-hint":
+      await store.set({ limitHint: m.payload });
+      return;
+  }
+}
+
+function scheduleSync(): void {
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => void syncNow(), SYNC_DEBOUNCE_MS);
+}
+
+// ---- sync ----
+
+function hostPattern(url: string): string | null {
+  try {
+    const u = new URL(normalizeBase(url));
+    return `${u.protocol}//${u.hostname}/*`;
+  } catch {
+    return null;
+  }
+}
+
+async function patchSync(patch: Partial<SyncState>): Promise<SyncState> {
+  const next = { ...(await store.get("syncState")), ...patch };
+  await store.set({ syncState: next });
+  return next;
+}
+
+let syncing: Promise<SyncState> | null = null;
+function syncNow(): Promise<SyncState> {
+  syncing ??= doSync().finally(() => (syncing = null));
+  return syncing;
+}
+
+async function doSync(): Promise<SyncState> {
+  const settings = await store.get("settings");
+  if (!settings.syncEnabled) return store.get("syncState");
+  const attemptAt = Date.now();
+  try {
+    const pattern = hostPattern(settings.deskbuddyUrl);
+    if (!pattern) return await patchSync({ lastAttemptAt: attemptAt, lastError: "Invalid DeskBuddy URL" });
+    if (!(await chrome.permissions.contains({ origins: [pattern] }))) {
+      return await patchSync({ lastAttemptAt: attemptAt, lastError: `Host permission not granted for ${pattern}` });
+    }
+    const [device, events, account] = await Promise.all([
+      store.ensureDevice(),
+      store.get("events"),
+      store.get("accountUsage"),
+    ]);
+    const res = await sendReport(settings.deskbuddyUrl, settings.sharedToken, buildReport(device, events, account));
+    return await patchSync(
+      res.ok
+        ? { lastAttemptAt: attemptAt, lastOkAt: Date.now(), lastError: null, queue: 0 }
+        : { lastAttemptAt: attemptAt, lastError: res.error ?? "Unknown error" },
+    );
+  } catch (e) {
+    return patchSync({ lastAttemptAt: attemptAt, lastError: e instanceof Error ? e.message : String(e) });
+  }
+}
+
+// ---- UI requests ----
+
+async function buildState(): Promise<UiState> {
+  const [device, settings, syncState, accountUsage, events] = await Promise.all([
+    store.ensureDevice(),
+    store.get("settings"),
+    store.get("syncState"),
+    store.get("accountUsage"),
+    store.get("events"),
+  ]);
+  return {
+    device,
+    settings,
+    syncState,
+    accountUsage,
+    aggregates: computeAggregates(events, Date.now()),
+    eventCount: events.length,
+  };
+}
+
+function ok<K extends UiRequest["type"]>(data: UiResponseData[K]): UiResponse<UiResponseData[K]> {
+  return { ok: true, data };
+}
+
+async function handleUi(req: UiRequest): Promise<UiResponse> {
+  try {
+    switch (req?.type) {
+      case "get-state":
+        return ok<"get-state">(await buildState());
+      case "save-settings": {
+        const cur = await store.get("settings");
+        const p = req.settings ?? {};
+        const next: Settings = { ...cur };
+        if (typeof p.deskbuddyUrl === "string") next.deskbuddyUrl = p.deskbuddyUrl.trim().slice(0, 200);
+        if (typeof p.syncEnabled === "boolean") next.syncEnabled = p.syncEnabled;
+        if (p.charsPerToken !== undefined) next.charsPerToken = clampCharsPerToken(p.charsPerToken);
+        if (typeof p.sharedToken === "string") next.sharedToken = p.sharedToken.slice(0, 200);
+        if (typeof p.pollAccountUsage === "boolean") next.pollAccountUsage = p.pollAccountUsage;
+        await store.set({ settings: next });
+        if (typeof req.deviceName === "string") {
+          const name = req.deviceName.trim().slice(0, 40);
+          if (name) await store.set({ device: { ...(await store.ensureDevice()), deviceName: name } });
+        }
+        if (next.syncEnabled) scheduleSync();
+        return ok<"save-settings">(await buildState());
+      }
+      case "test-connection": {
+        const s = await store.get("settings");
+        const pattern = hostPattern(s.deskbuddyUrl);
+        if (!pattern) return ok<"test-connection">({ reachable: false, detail: "Invalid DeskBuddy URL" });
+        if (!(await chrome.permissions.contains({ origins: [pattern] }))) {
+          return ok<"test-connection">({ reachable: false, detail: `Host permission not granted for ${pattern}` });
+        }
+        const r = await ping(s.deskbuddyUrl, s.sharedToken);
+        return ok<"test-connection">({ reachable: r.ok, detail: r.ok ? "OK" : (r.error ?? "Unreachable") });
+      }
+      case "sync-now": {
+        clearTimeout(syncTimer);
+        return ok<"sync-now">(await syncNow());
+      }
+      case "export-data": {
+        const [device, settings, events, accountUsage] = await Promise.all([
+          store.ensureDevice(),
+          store.get("settings"),
+          store.get("events"),
+          store.get("accountUsage"),
+        ]);
+        const { sharedToken: _omit, ...safeSettings } = settings;
+        return ok<"export-data">({ json: JSON.stringify({ device, settings: safeSettings, events, accountUsage }, null, 2) });
+      }
+      case "clear-data": {
+        await store.mutateEvents(() => []);
+        await store.set({ accountUsage: null, limitHint: null, syncState: { ...DEFAULT_SYNC_STATE } });
+        return ok<"clear-data">(await buildState());
+      }
+      default:
+        return { ok: false, error: "unknown request" };
+    }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}

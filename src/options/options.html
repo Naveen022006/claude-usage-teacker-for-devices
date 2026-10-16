@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Usage Options</title>
+<link rel="stylesheet" href="options.css">
+</head>
+<body>
+<main>
+  <h1>Claude Usage Tracker</h1>
+
+  <form id="form" autocomplete="off">
+    <label class="field">
+      <span>Device name</span>
+      <input id="deviceName" type="text" maxlength="40">
+    </label>
+
+    <label class="field">
+      <span>DeskBuddy URL</span>
+      <div class="row">
+        <input id="url" type="url" placeholder="http://deskbuddy.local">
+        <button id="test" type="button">Test connection</button>
+      </div>
+    </label>
+
+    <label class="field">
+      <span>Shared token</span>
+      <input id="token" type="password" autocomplete="off">
+    </label>
+
+    <label class="check"><input id="syncEnabled" type="checkbox"> <span>Sync to DeskBuddy</span></label>
+
+    <label class="field">
+      <span>Characters per token: <output id="cptOut">3.6</output></span>
+      <input id="cpt" type="range" min="2.5" max="5" step="0.1" value="3.6">
+    </label>
+
+    <label class="check"><input id="poll" type="checkbox"> <span>Poll account usage</span></label>
+
+    <div class="row actions">
+      <button id="save" type="submit" class="primary">Save</button>
+      <button id="export" type="button">Export JSON</button>
+      <button id="clear" type="button" class="danger">Clear data</button>
+    </div>
+  </form>
+
+  <p id="status" role="status" aria-live="polite"></p>
+  <p class="small">Device ID: <code id="deviceId">…</code></p>
+</main>
+<script src="options.js"></script>
+</body>
+</html>

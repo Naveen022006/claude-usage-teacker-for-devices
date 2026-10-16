@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "DeskBuddy Usage Tracker",
+  "version": "0.1.0",
+  "description": "Per-device Claude usage tracking for the DeskBuddy display. Counts only — never message content.",
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["https://claude.ai/*"],
+  "optional_host_permissions": ["http://*/*"],
+  "background": { "service_worker": "sw.js", "type": "module" },
+  "content_scripts": [
+    { "matches": ["https://claude.ai/*"], "js": ["inject.js"], "run_at": "document_start", "world": "MAIN" },
+    { "matches": ["https://claude.ai/*"], "js": ["bridge.js"], "run_at": "document_start" }
+  ],
+  "action": { "default_popup": "popup.html" },
+  "options_page": "options.html"
+}

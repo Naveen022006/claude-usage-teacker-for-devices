@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Usage</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<header>
+  <span id="dot" class="dot off" role="img" aria-label="sync off" title="sync off"></span>
+  <span id="device" class="device">…</span>
+  <button id="sync" class="icon" type="button" title="Sync now" aria-label="Sync now">&#x21bb;</button>
+</header>
+<div class="tabs" role="tablist" aria-label="Time window">
+  <button role="tab" id="tab-today" data-win="today" aria-selected="true" tabindex="0">Today</button>
+  <button role="tab" id="tab-last5h" data-win="last5h" aria-selected="false" tabindex="-1">5h</button>
+  <button role="tab" id="tab-last7d" data-win="last7d" aria-selected="false" tabindex="-1">7d</button>
+</div>
+<main role="tabpanel" aria-live="polite">
+  <div class="big">
+    <div><div id="msgs" class="num">0</div><div class="lbl">messages</div></div>
+    <div><div id="ptok" class="num">0</div><div class="lbl">≈ prompt tokens</div></div>
+    <div><div id="otok" class="num">0</div><div class="lbl">≈ output tokens</div></div>
+  </div>
+  <ul id="models" class="models"></ul>
+  <p id="empty" class="empty" hidden>No messages yet — send one on claude.ai</p>
+  <div id="account" class="account" hidden></div>
+  <p id="error" class="err" hidden></p>
+</main>
+<footer>
+  <a href="#" id="opts">Token counts are estimates</a>
+</footer>
+<script src="popup.js"></script>
+</body>
+</html>

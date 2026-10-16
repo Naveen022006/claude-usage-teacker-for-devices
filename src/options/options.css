@@ -1,0 +1,42 @@
+:root {
+  --bg: #fff; --fg: #1f2328; --muted: #5b636b; --line: #cfd4da; --accent: #b4532f; --accent-fg: #fff;
+  --field: #fff; --ok: #1a7f37; --warn: #9a6700; --bad: #cf222e;
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1c1e; --fg: #ececec; --muted: #a0a7ae; --line: #45474b; --accent: #e08a68; --accent-fg: #1c1c1e;
+    --field: #26272a; --ok: #3fb950; --warn: #e3b341; --bad: #ff7b72;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); }
+main { max-width: 520px; margin: 0 auto; padding: 24px 16px; }
+h1 { font-size: 18px; margin: 0 0 16px; }
+.field { display: grid; gap: 4px; margin-bottom: 14px; }
+.field > span { font-weight: 600; }
+.check { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.row input { flex: 1; min-width: 0; }
+input[type="text"], input[type="url"], input[type="password"] {
+  font: inherit; color: inherit; background: var(--field); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 8px; width: 100%;
+}
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
+button {
+  font: inherit; color: inherit; background: var(--field); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 12px; cursor: pointer;
+}
+button:hover { border-color: var(--muted); }
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+button.danger { color: var(--bad); }
+button:disabled { opacity: .55; cursor: default; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.actions { margin-top: 20px; }
+.actions .danger { margin-left: auto; }
+#status { min-height: 1.5em; margin: 14px 0 0; }
+#status.ok { color: var(--ok); } #status.warn { color: var(--warn); } #status.bad { color: var(--bad); }
+.small { font-size: 12px; color: var(--muted); }
+output { font-variant-numeric: tabular-nums; }
+code { font-size: 11px; word-break: break-all; }

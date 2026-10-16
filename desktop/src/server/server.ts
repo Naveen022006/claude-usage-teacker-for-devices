@@ -12,14 +12,14 @@ import { normalizeBase } from "../../../src/sync/hub";
 import type { DesktopRequest, DesktopState } from "../shared/ipc";
 import { createEngine, type Engine } from "../main/engine";
 import { NOTE_REFRESH, NOTE_TRAY_SIGN_IN, type AccountSource, type RefreshSpawn } from "./accountUsage";
-import { CHROME_FILE, ChromeAccounts, createDesktopLimitsSource } from "./desktopLimits";
+import { createDesktopLimitsSource } from "./desktopLimits";
 import { buildTrayState } from "./trayState";
 import type { TrayState } from "../shared/tray";
 import { loadConfig } from "../../../daemon/src/config";
 
 export const APP_NAME = "usage-meter-desktop";
 export const DEFAULT_PORT = 47823;
-const POLL_MS = 15_000; // local file read (statusLine output), cheap
+const POLL_MS = 60_000;
 const BACKOFF_STEPS_MS = [2, 4, 8, 15].map((m) => m * 60_000);
 const SSE_KEEPALIVE_MS = 25_000;
 const MIME: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png" };
@@ -114,8 +114,7 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
   let limitsSource: TrayState["limitsSource"] = null;
   let limitsNote: string | null = null;
   // Plan limits come ONLY from Claude Desktop (statusLine → desktop-limits.json). No CLI / tray login, no hub.
-  const chromeAccounts = new ChromeAccounts(join(opts.dataDir, CHROME_FILE));
-  const account: AccountSource = opts.accountSource ?? createDesktopLimitsSource({ dataDir: opts.dataDir, chrome: chromeAccounts, now: opts.now });
+  const account: AccountSource = opts.accountSource ?? createDesktopLimitsSource();
   let fingerprint: string | null = null; // identity hash of the account the current readings/ledger belong to
   let credStamp = account.stamp();
   let accountBusy: Promise<void> | null = null;
@@ -379,19 +378,6 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
         if (!hostOk(req)) return send(res, 403, "forbidden");
         const u = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
         if (u.pathname === "/health" && req.method === "GET") return json(res, 200, { app: APP_NAME });
-        // Plan usage from the Chrome extension (signed in to the Claude Desktop account). Extension origins only.
-        if (u.pathname === "/api/local-account" && req.method === "POST") {
-          if (!String(req.headers.origin ?? "").startsWith("chrome-extension://")) return send(res, 403, "forbidden");
-          let body: unknown;
-          try {
-            body = JSON.parse(await readBody(req));
-          } catch {
-            return send(res, 400, "bad request");
-          }
-          if (!chromeAccounts.accept(body, (opts.now ?? Date.now)())) return send(res, 400, "invalid");
-          void limitsRefresh();
-          return json(res, 200, { ok: true });
-        }
         if (!u.pathname.startsWith("/u/")) return send(res, 404, "not found");
         const k = u.pathname.split("/")[2] ?? "";
         if (!safeEq(k, key)) return send(res, 403, "forbidden");
@@ -407,7 +393,7 @@ export async function startServer(opts: ServerOpts): Promise<RunningServer> {
         if (rest === "api/tray" && req.method === "GET") {
           const e = engine.snapshot();
           const ai = account.inspect();
-          return json(res, 200, buildTrayState({ now: clock(), backoffUntil, plan: ai.plan ?? plan, accountKind: limitsSource === "hub" ? null : ai.accountKind, limitsSource, limitsNote, accountUsage, attribution: e.attribution, tokensNew5hByModel: e.tokensNew5hByModel }));
+          return json(res, 200, buildTrayState({ now: clock(), backoffUntil, plan: ai.plan ?? plan, accountKind: limitsSource === "hub" ? null : ai.accountKind, limitsSource, limitsNote, accountUsage, attribution: e.attribution, tokensNew5hByModel: e.tokensNew5hByModel, usage5hByModel: e.usage5hByModel, usage7dByModel: e.usage7dByModel }));
         }
         if (rest === "api/events" && req.method === "GET") {
           res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive", "X-Content-Type-Options": "nosniff" });

@@ -17,7 +17,12 @@ export interface Engine {
   applyAccountUsage(u: AccountUsage, now: number): void;
   resetAttribution(): void;
   refreshNow(): Promise<void>;
-  snapshot(): Pick<DesktopState, "attribution" | "local" | "tokens5hByModel" | "scan"> & { tokensNew5hByModel: Record<string, number> };
+  snapshot(): Pick<DesktopState, "attribution" | "local" | "tokens5hByModel" | "scan"> & {
+    tokensNew5hByModel: Record<string, number>;
+    /** Exact Claude Desktop usage per model: new tokens (cache reads excluded) and replies, last 5 h / last 7 d. */
+    usage5hByModel: Record<string, { tokens: number; messages: number }>;
+    usage7dByModel: Record<string, { tokens: number; messages: number }>;
+  };
   onChange(cb: () => void): () => void;
   onReplies(cb: () => void): () => void;
 }
@@ -268,14 +273,24 @@ export function createEngine(opts: { dataDir: string; projectsDir: string; scanI
       }
       // NEW tokens: prompt minus cache reads, plus output (cache reads barely count against limits).
       const tokensNew5hByModel: Record<string, number> = {};
+      const usage5hByModel: Record<string, { tokens: number; messages: number }> = {};
+      const usage7dByModel: Record<string, { tokens: number; messages: number }> = {};
+      const add = (m: Record<string, { tokens: number; messages: number }>, model: string, n: number) => {
+        const r = (m[model] ??= { tokens: 0, messages: 0 });
+        r.tokens += n;
+        r.messages++;
+      };
       for (const e of srcEvents) {
-        if (e.ts < t - H5 || e.ts > t) continue;
+        if (e.ts > t || e.ts < t - 7 * DAY) continue;
         const n = Math.max(0, e.promptTokens - (e.cacheReadTokens ?? 0)) + e.outputTokens;
+        add(usage7dByModel, e.model, n);
+        if (e.ts < t - H5) continue;
         tokensNew5hByModel[e.model] = (tokensNew5hByModel[e.model] ?? 0) + n;
+        add(usage5hByModel, e.model, n);
       }
       const scanState: DesktopState["scan"] = { lastScanAt, filesRead };
       if (scanError) scanState.error = scanError;
-      return { attribution: attributionView(ledger), local, tokens5hByModel, tokensNew5hByModel, scan: scanState };
+      return { attribution: attributionView(ledger), local, tokens5hByModel, tokensNew5hByModel, usage5hByModel, usage7dByModel, scan: scanState };
     },
     onChange(cb) {
       changeCbs.add(cb);

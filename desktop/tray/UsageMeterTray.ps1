@@ -1,6 +1,6 @@
 # Usage Meter Desktop - Windows tray front-end (PowerShell 5.1, pure .NET, no compiled binaries).
 # Contract: desktop/src/shared/tray.ts. Keep this file ASCII-only (PS 5.1 reads BOM-less files as ANSI).
-param([switch]$SelfTest, [double]$TestScale = 0)
+param([switch]$SelfTest, [double]$TestScale = 0, [string]$StateFile = '')
 Set-StrictMode -Version 2
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -186,13 +186,18 @@ function Draw-Popup($g, [double]$scale, $st, [string]$statusText) {
     $y += PxS 2
     HLine $g $y $pad $right
     $y += PxS 8
-    $cTok = PxS 56; $cWk = PxS 44; $c5 = PxS 44; $gap = PxS 6
+    # Exact-usage mode (no plan limits from Claude Desktop): columns show token counts instead of limit %.
+    $hdr = @(Prop $st 'modelHeader'); $exact = ($hdr.Count -eq 3 -and $null -ne $hdr[0])
+    if ($exact) { $cTok = PxS 52; $cWk = PxS 62; $c5 = PxS 56 } else { $cTok = PxS 56; $cWk = PxS 44; $c5 = PxS 44 }
+    $gap = PxS 6
     $tokX = $right - $cTok; $wkX = $tokX - $gap - $cWk; $f5X = $wkX - $gap - $c5
     $mlW = $f5X - $pad - (PxS 8)
+    $h1 = '5h'; $h2 = 'Week'; $h3 = 'Tokens'
+    if ($exact) { $h1 = [string]$hdr[0]; $h2 = [string]$hdr[1]; $h3 = [string]$hdr[2] }
     Txt $g 'Models' $script:fSmall $pad $y $mlW (PxS 16) $script:cMuted $script:flL
-    Txt $g '5h' $script:fSmall $f5X $y $c5 (PxS 16) $script:cMuted $script:flR
-    Txt $g 'Week' $script:fSmall $wkX $y $cWk (PxS 16) $script:cMuted $script:flR
-    Txt $g 'Tokens' $script:fSmall $tokX $y $cTok (PxS 16) $script:cMuted $script:flR
+    Txt $g $h1 $script:fSmall $f5X $y $c5 (PxS 16) $script:cMuted $script:flR
+    Txt $g $h2 $script:fSmall $wkX $y $cWk (PxS 16) $script:cMuted $script:flR
+    Txt $g $h3 $script:fSmall $tokX $y $cTok (PxS 16) $script:cMuted $script:flR
     $y += PxS 22
     $est = ((Prop $st 'modelsEstimated') -eq $true)
     $apx = ''; if ($est) { $apx = [string][char]0x2248 }
@@ -204,12 +209,19 @@ function Draw-Popup($g, [double]$scale, $st, [string]$statusText) {
       foreach ($m in $models) {
         Txt $g ((Prop $m 'label') + ':') $script:fNorm $pad $y $mlW (PxS 20) $script:cFg $script:flL
         $p5 = Prop $m 'pct5h'; $pw = Prop $m 'pctWeek'
-        $c5c = $script:cBlue; if ($null -eq $p5) { $c5c = $script:cMuted }
-        $cwc = $script:cBlue; if ($null -eq $pw) { $cwc = $script:cMuted }
-        Txt $g (FmtPct $p5 $true $apx) $script:fNorm $f5X $y $c5 (PxS 20) $c5c $script:flR
-        Txt $g (FmtPct $pw $true $apx) $script:fNorm $wkX $y $cWk (PxS 20) $cwc $script:flR
-        Txt $g ([string](Prop $m 'tokensText')) $script:fSmall $tokX $y $cTok (PxS 20) $script:cMuted $script:flR
-        Bar $g $pad ($y + (PxS 24)) $inner $p5 $script:cBlue
+        if ($exact) {
+          Txt $g ([string](Prop $m 'text5h')) $script:fNorm $f5X $y $c5 (PxS 20) $script:cFg $script:flR
+          Txt $g ([string](Prop $m 'textWeek')) $script:fNorm $wkX $y $cWk (PxS 20) $script:cFg $script:flR
+          Txt $g ([string](Prop $m 'tokensText')) $script:fSmall $tokX $y $cTok (PxS 20) $script:cMuted $script:flR
+          Bar $g $pad ($y + (PxS 24)) $inner (Prop $m 'barPct') $script:cBlue
+        } else {
+          $c5c = $script:cBlue; if ($null -eq $p5) { $c5c = $script:cMuted }
+          $cwc = $script:cBlue; if ($null -eq $pw) { $cwc = $script:cMuted }
+          Txt $g (FmtPct $p5 $true $apx) $script:fNorm $f5X $y $c5 (PxS 20) $c5c $script:flR
+          Txt $g (FmtPct $pw $true $apx) $script:fNorm $wkX $y $cWk (PxS 20) $cwc $script:flR
+          Txt $g ([string](Prop $m 'tokensText')) $script:fSmall $tokX $y $cTok (PxS 20) $script:cMuted $script:flR
+          Bar $g $pad ($y + (PxS 24)) $inner $p5 $script:cBlue
+        }
         $y += PxS 34
       }
     }
@@ -383,7 +395,9 @@ if ($SelfTest) {
   $s = $dpi / 96.0
   if ($TestScale -gt 0) { $s = $TestScale }
   $suffix = ''; if ($TestScale -gt 0) { $suffix = '-' + $TestScale }
-  $fake | Add-Member -NotePropertyName modelsEstimated -NotePropertyValue $true
+  $fake | Add-Member -NotePropertyName modelsEstimated -NotePropertyValue $true -Force
+  # -StateFile <json>: render a saved /api/tray response instead of the sample state (to check the real popup)
+  if ($StateFile) { $fake = Get-Content -Raw -LiteralPath $StateFile | ConvertFrom-Json; $suffix = '-state' }
   $h = Measure-Popup $s $fake ''
   $bmp = New-Object System.Drawing.Bitmap([int](PxS $script:W), $h)
   $g = [System.Drawing.Graphics]::FromImage($bmp)

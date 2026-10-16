@@ -20,7 +20,12 @@ export interface TrayModel {
   pct5h: number | null; // percentage points of the 5h session attributed to this model
   pctWeek: number | null; // percentage points of the weekly limit
   tokens: number; // NEW tokens in the last 5 h: input + cache_creation + output (cache READS excluded)
-  tokensText: string; // "48k", "1.2M"
+  tokensText: string; // "48k", "1.2M" (or "14 msgs" when modelHeader is set)
+  /** When set, shown in the 5h / Week columns instead of a percentage (exact Desktop token counts). */
+  text5h?: string;
+  textWeek?: string;
+  /** Bar width 0–100 when there is no pct5h (share of the week's tokens). */
+  barPct?: number;
 }
 
 export interface TrayState {
@@ -35,6 +40,8 @@ export interface TrayState {
   accountKind?: "tray" | "cli" | "desktop" | null;
   limits: TrayLimit[]; // always includes Session (5h) and Weekly (pct null when unknown)
   models: TrayModel[]; // sorted by pct5h desc, then tokens desc; max 6
+  /** Column titles when models show exact usage instead of limit %: e.g. ["5h tok", "Week tok", "Week"]. */
+  modelHeader?: [string, string, string];
   /** true when per-model points include a baseline split estimated from local events (tray shows "≈"). */
   modelsEstimated?: boolean;
   other: { pct5h: number | null; pctWeek: number | null } | null;

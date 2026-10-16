@@ -18,12 +18,13 @@ export const SIDEBAR_CSS = `
 .sb .icon-btn { width: 24px; height: 24px; border-radius: 6px; background: none; border: 0; display: grid; place-items: center; color: var(--blue); }
 .sb .icon-btn:hover { background: var(--line); }
 .sb button:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; border-radius: 4px; }
-.sb-row { display: grid; grid-template-columns: 45% auto minmax(0, 1fr); align-items: baseline; }
-.sb-lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 6px; }
-.sb-pct { color: var(--blue); }
+/* label shrinks (ellipsis), % has its own fixed column, countdown/tokens never shrink — nothing can overlap */
+.sb-row { display: grid; grid-template-columns: minmax(0, 1fr) 3.3em auto; column-gap: 8px; align-items: baseline; }
+.sb-lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-pct { color: var(--blue); white-space: nowrap; }
 .sb-pct.t-warn, .sb-fill.t-warn { --blue: var(--warn); }
 .sb-pct.t-bad, .sb-fill.t-bad { --blue: var(--bad); }
-.sb-right { justify-self: end; display: inline-flex; align-items: center; gap: 4px; color: var(--muted); white-space: nowrap; }
+.sb-right { justify-self: end; display: inline-flex; align-items: center; gap: 4px; color: var(--muted); white-space: nowrap; font-size: 12.5px; }
 .sb-right .clk { flex: none; position: relative; top: 1px; }
 .sb-bar { height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; margin-top: 6px; }
 .sb-fill { height: 100%; border-radius: 2px; background: var(--blue); min-width: 2px; }

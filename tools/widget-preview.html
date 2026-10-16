@@ -43,7 +43,7 @@
         '<div class="h">Recents</div><a href="/chat/3">Trip ideas</a></div></nav></aside>';
     } else if (mode === "code") {
       html = '<div class="sidebar"><div class="ttl">Claude Code</div><div class="search">Search</div><div class="rows">' +
-        row("New", "/code") + row("Projects (Beta)", "/code/projects") + row("Artifacts", "/code/artifacts") + row("Customize", "/code/customize") + row("More", "#") +
+        row("New", "/code") + row("Projects (Beta)", "/code/projects") + row("Artifacts", "/code/artifacts") + row("Customize", "/code/customize") + '<div class="rw"><div><button type="button" style="all:unset;display:flex;align-items:center;gap:8px;cursor:pointer"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor"/></svg>···<span>More</span></button></div></div>' +
         '</div><div class="sect"><div class="h">Recents</div><a href="/code/s1">Fix flaky test</a><a href="/code/s2">Add dark mode</a></div></div>';
     }
     document.getElementById("mount").innerHTML = html;

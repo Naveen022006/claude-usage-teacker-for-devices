@@ -2,6 +2,7 @@
 // Renders into a closed Shadow DOM with constructable stylesheets. Observes only: never touches
 // claude.ai requests. Everything fails soft. No innerHTML anywhere (dynamic data uses textContent).
 
+import { parseLastActiveOrg } from "../shared/org";
 import { NS, type UiResponse, type WidgetState } from "../shared/messages";
 import type { WindowAggregate } from "../shared/types";
 import { HOST_ATTR, detectMode, placeHost, watchPlacement, type Mode, type Placement } from "./anchor";
@@ -120,7 +121,17 @@ let dead = false; // extension context invalidated
 async function request<T>(type: "get-widget-state" | "open-options"): Promise<T | null> {
   if (dead) return null;
   try {
-    const res = (await chrome.runtime.sendMessage({ ns: NS, type })) as UiResponse<T> | undefined;
+    const msg: Record<string, unknown> = { ns: NS, type };
+    if (type === "get-widget-state") {
+      let hint: string | null = null;
+      try {
+        hint = parseLastActiveOrg(document.cookie);
+      } catch {
+        /* cookie access blocked */
+      }
+      if (hint) msg.orgHint = hint;
+    }
+    const res = (await chrome.runtime.sendMessage(msg)) as UiResponse<T> | undefined;
     if (res && res.ok) return res.data;
     if (res && !res.ok) warn("request failed", res.error);
     return null;

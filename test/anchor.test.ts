@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HOST_ATTR, detectMode, findAnchor, isUsableAnchor, placeHost, watchPlacement } from "../src/widget/anchor";
+import { HOST_ATTR, detectMode, findAnchor, isUsableAnchor, labelKey, placeHost, resetAnchorDiagnostics, watchPlacement } from "../src/widget/anchor";
 
 const ok = { usable: () => true };
 
@@ -79,9 +79,65 @@ describe("findAnchor", () => {
     expect(a.via).toBe("fallback");
     expect(a.row.textContent).toBe("Anpassen");
   });
-  it("code has no fallback", () => {
+  it("code: nav fallback (row before the first section heading) when nothing else matches", () => {
     setup(OTHER_LANG);
-    expect(findAnchor(document, "code", ok)).toBeNull();
+    const a = findAnchor(document, "code", ok)!;
+    expect(a.via).toBe("fallback");
+    expect(a.row.textContent).toBe("Anpassen");
+  });
+  it("labelKey strips everything but letters", () => {
+    expect(labelKey("··· More")).toBe("more");
+    expect(labelKey("Projects Beta")).toBe("projectsbeta");
+    expect(labelKey(null)).toBe("");
+  });
+  it("code: More row with svg icon and a dots text node before the label", () => {
+    setup(`<nav><a href="/code/customize"><span>Customize</span></a>
+      <div id="more"><button type="button"><svg></svg>···<span> More</span></button></div>
+      <div><span>Recents</span></div></nav>`);
+    const a = findAnchor(document, "code", ok)!;
+    expect(a.via).toBe("label");
+    expect(a.row.id).toBe("more");
+  });
+  it("code: More matched through aria-label when hidden text is appended", () => {
+    setup(`<nav><a href="/code/customize">Customize</a>
+      <div id="more"><button aria-label="More"><svg></svg><span>···</span><span class="sr-only">options</span></button></div>
+      <div>Recents</div></nav>`);
+    expect(findAnchor(document, "code", ok)!.row.id).toBe("more");
+  });
+  it("code: More text in a nested span", () => {
+    setup(`<nav><div id="more"><div><div role="button"><span><span>More</span></span></div></div></div><div>Recents</div></nav>`);
+    expect(findAnchor(document, "code", ok)!.row.id).toBe("more");
+  });
+  it("code: no More row -> Customize next sibling, unless that is a section heading", () => {
+    setup(`<nav><div><a href="/code/customize">Customize</a></div><div id="next"><a href="/code/x">Extra</a></div><div class="h">Recents</div></nav>`);
+    let a = findAnchor(document, "code", ok)!;
+    expect(a.via).toBe("sibling");
+    expect(a.row.id).toBe("next");
+    setup(`<nav><div id="cust"><a href="/code/customize">Customize</a></div><div class="h">Recents</div><a href="/code/s1">Session</a></nav>`);
+    a = findAnchor(document, "code", ok)!;
+    expect(a.row.id).toBe("cust");
+  });
+  it("code: host placed under Customize moves to More once More renders", () => {
+    setup(`<nav><div id="cust"><a href="/code/customize">Customize</a></div><div>Recents</div></nav>`);
+    const host = mkHost();
+    placeHost(host, document, "/code", ok);
+    placeHost(host, document, "/code", ok);
+    expect(host.previousElementSibling?.id).toBe("cust");
+    document.getElementById("cust")!.insertAdjacentHTML("afterend", `<div id="more"><button><svg></svg>···More</button></div>`);
+    placeHost(host, document, "/code", ok);
+    expect(host.previousElementSibling?.id).toBe("more");
+  });
+  it("logs diagnostics once per mode when no anchor is found", () => {
+    const spy = vi.spyOn(console, "info").mockImplementation(() => {});
+    resetAnchorDiagnostics();
+    setup(`<nav><a href="/a">One</a><button>Two</button></nav>`);
+    findAnchor(document, "code", ok);
+    findAnchor(document, "code", ok);
+    findAnchor(document, "chat", ok);
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy.mock.calls[0][0]).toContain("sidebar anchor not found (mode=code)");
+    expect(spy.mock.calls[0][1]).toEqual(["one", "two"]);
+    spy.mockRestore();
   });
   it("missing anchor -> null", () => {
     setup("<nav><a href='/a'>One</a></nav>");

@@ -14,6 +14,7 @@ import {
   type WidgetState,
 } from "./shared/messages";
 import { DEFAULT_SYNC_STATE, type Settings, type SyncState, type UsageEvent } from "./shared/types";
+import { pickOrg } from "./shared/org";
 import { sanitizeDeviceIds, validatePageMessage, validateWidgetRequest } from "./shared/validate";
 import * as store from "./storage";
 import { fetchAccountUsage } from "./sync/accountUsage";
@@ -71,7 +72,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
       // The widget (ISOLATED content script) is the only content script that gets a response.
       const w = validateWidgetRequest(msg);
       if (w) {
-        handleWidget(w.type).then(sendResponse, (e) =>
+        handleWidget(w.type, w.type === "get-widget-state" ? w.orgHint : undefined).then(sendResponse, (e) =>
           sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }),
         );
         return true;
@@ -191,7 +192,30 @@ function maybeRefreshUsageForWidget(settings: Settings, orgId: string | null, us
     .catch((e) => console.warn("[claude-usage] widget usage refresh failed", e));
 }
 
-async function handleWidget(type: "get-widget-state" | "open-options"): Promise<UiResponse> {
+const ORG_DISCOVERY_MIN_GAP_MS = 10 * 60_000;
+let lastOrgDiscovery = 0;
+
+/** Fallback when no orgId is known: ask claude.ai which organizations the session belongs to. Never throws. */
+async function discoverOrgId(hint: string | undefined): Promise<string | null> {
+  const now = Date.now();
+  if (now - lastOrgDiscovery < ORG_DISCOVERY_MIN_GAP_MS) return null;
+  lastOrgDiscovery = now;
+  try {
+    const res = await fetch("https://claude.ai/api/organizations", { credentials: "include" });
+    if (!res.ok) {
+      console.warn("[claude-usage] org discovery failed: HTTP", res.status);
+      return null;
+    }
+    const id = pickOrg(await res.json(), hint);
+    if (!id) console.warn("[claude-usage] org discovery: no organization found");
+    return id;
+  } catch (e) {
+    console.warn("[claude-usage] org discovery failed", e);
+    return null;
+  }
+}
+
+async function handleWidget(type: "get-widget-state" | "open-options", orgHint?: string): Promise<UiResponse> {
   try {
     if (type === "open-options") {
       await chrome.runtime.openOptionsPage();
@@ -205,7 +229,20 @@ async function handleWidget(type: "get-widget-state" | "open-options"): Promise<
       store.get("events"),
       store.get("orgId"),
     ]);
-    maybeRefreshUsageForWidget(settings, orgId, accountUsage);
+    let org = orgId;
+    let learned = false;
+    if (orgHint && orgHint !== org) {
+      org = orgHint; // the active org may change (cookie is authoritative)
+      learned = true;
+    } else if (!org && settings.pollAccountUsage) {
+      org = await discoverOrgId(orgHint);
+      learned = !!org;
+    }
+    if (learned && org) {
+      await store.set({ orgId: org });
+      lastWidgetUsageAttempt = 0; // allow an immediate usage fetch, which broadcasts state-changed
+    }
+    maybeRefreshUsageForWidget(settings, org, learned ? null : accountUsage);
     const now = Date.now();
     const state: WidgetState = {
       device,

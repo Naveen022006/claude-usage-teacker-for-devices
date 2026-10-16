@@ -28,7 +28,7 @@ export type PageMessage =
  * These are the ONLY content-script messages that get a response. Wrapped with `ns` like PageMessage.
  */
 export type WidgetRequest =
-  | { ns: typeof NS; type: "get-widget-state" }
+  | { ns: typeof NS; type: "get-widget-state"; orgHint?: string }
   | { ns: typeof NS; type: "open-options" };
 
 /** SW -> widget broadcast (chrome.tabs.sendMessage) after a new usage event / account refresh. */

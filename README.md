@@ -1,4 +1,4 @@
-# Claude Usage Tracker
+# Usage Meter for Claude
 
 See your Claude Pro/Max usage **per device and per model**, with tokens and plan limits, in one place.
 
@@ -53,3 +53,6 @@ Extension: options page -> Hub URL, Hub token, Test connection, enable sync.
 ## Ground rules
 - Read-only: never modify requests to claude.ai, never send prompts/responses anywhere.
 - Only counts and metadata leave the device. No message content.
+
+---
+Usage Meter for Claude is an unofficial extension and is not affiliated with Anthropic. See [docs/12-publishing.md](docs/12-publishing.md) and [store/PRIVACY.md](store/PRIVACY.md).

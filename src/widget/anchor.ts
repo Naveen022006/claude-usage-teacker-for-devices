@@ -1,7 +1,8 @@
 // Finds where the usage panel goes inside claude.ai's left sidebar and keeps it attached across
 // React re-renders and SPA navigation. DOM-only (no chrome.*), unit-tested with happy-dom fixtures.
 //
-// Both modes: directly ABOVE the "Recents" (or "Chats and tasks") section heading, i.e. after "Pinned".
+// Both modes: directly ABOVE the FIRST section heading after the top nav rows ("Pinned" if present, else
+// "Recents" / "Chats and tasks").
 // Fallbacks: below the "More" row, then below "Customize", then the language-tolerant nav heuristic.
 //
 // Selectors here are the fragile part (claude.ai's markup is undocumented): everything fails soft
@@ -71,7 +72,7 @@ export function climbToRow(el: Element, root: Element): Element {
 export interface Anchor {
   row: Element;
   /** sibling: code mode without a "More" row (below/at Customize); re-checked for a real "More" row later. */
-  via: "href" | "label" | "fallback" | "sibling" | "before-recents";
+  via: "href" | "label" | "fallback" | "sibling" | "before-section";
 }
 
 export interface FindOptions {
@@ -115,21 +116,27 @@ function rowByHref(doc: Document, frag: string, usable: (e: Element) => boolean)
   return null;
 }
 
-const RECENTS_KEYS = ["recents", "chatsandtasks"];
+const SECTION_KEYS = ["pinned", "recents", "chatsandtasks", "starred"];
 
-/** The "Recents" / "Chats and tasks" section heading row (non-link text, optionally with "+"/filter buttons). */
-function recentsRow(doc: Document, usable: (e: Element) => boolean): Element | null {
-  for (const key of RECENTS_KEYS) {
+/**
+ * The FIRST section heading row (Pinned / Recents / Chats and tasks / Starred) in document order: non-link text
+ * element (may be a collapsible button), optionally with chevron/"+"/filter buttons, outside <main>.
+ */
+function sectionRow(doc: Document, usable: (e: Element) => boolean): Element | null {
+  let best: Element | null = null;
+  for (const key of SECTION_KEYS) {
     for (const el of labelCandidates(doc, key)) {
       if (labelKey(el.textContent) !== key) continue; // aria-label-only matches are controls, not headings
       if (el.closest("a[href]") || el.matches("a[href]")) continue;
       if (el.closest("main, [role=main]")) continue;
+      if (Array.from(el.querySelectorAll("a[href]")).some((a) => labelKey(a.textContent) === key)) continue; // wrapper of a nav link
       const row = climbToRow(el, rootFor(el));
       if (row.closest("a[href]")) continue;
-      if (usable(row)) return row;
+      if (!usable(row)) continue;
+      if (!best || (best !== row && best.compareDocumentPosition(row) & 2 /* PRECEDING */)) best = row;
     }
   }
-  return null;
+  return best;
 }
 
 /** A nav row near the host used to measure the highlight-box inset / theme (the Recents heading itself is unsuitable). */
@@ -205,7 +212,7 @@ function reportNoRecents(mode: Mode): void {
   if (reportedNoRecents.has(mode)) return;
   reportedNoRecents.add(mode);
   try {
-    console.info(`[claude-usage] "Recents" heading not found (mode=${mode}); using fallback anchor`);
+    console.info(`[claude-usage] section heading (Pinned/Recents) not found (mode=${mode}); using fallback anchor`);
   } catch {
     /* ignore */
   }
@@ -243,8 +250,8 @@ function reportMissing(doc: Document, mode: Mode): void {
 
 function findAnchorInner(doc: Document, mode: Mode, usable: (e: Element) => boolean): Anchor | null {
   const roots = sidebarRoots(doc);
-  const rec = recentsRow(doc, usable);
-  if (rec) return { row: rec, via: "before-recents" };
+  const rec = sectionRow(doc, usable);
+  if (rec) return { row: rec, via: "before-section" };
   const more = rowByLabel(doc, "more", usable);
   if (more) return { row: more, via: "label" };
   if (mode === "chat") {
@@ -268,7 +275,7 @@ function findAnchorInner(doc: Document, mode: Mode, usable: (e: Element) => bool
 export function findAnchor(doc: Document, mode: Mode, opts: FindOptions = {}): Anchor | null {
   const a = findAnchorInner(doc, mode, opts.usable ?? isUsableAnchor);
   if (!a) reportMissing(doc, mode);
-  else if (a.via !== "before-recents") reportNoRecents(mode);
+  else if (a.via !== "before-section") reportNoRecents(mode);
   return a;
 }
 
@@ -276,7 +283,7 @@ export function findAnchor(doc: Document, mode: Mode, opts: FindOptions = {}): A
 export function rowMatches(row: Element, mode: Mode, via: string | undefined): boolean {
   if (via === "fallback" || via === "sibling") return true;
   const k = labelKey(row.textContent);
-  if (via === "before-recents") return RECENTS_KEYS.includes(k);
+  if (via === "before-section") return SECTION_KEYS.includes(k);
   const isMore = k === "more" || labelKey(row.getAttribute("aria-label")) === "more" || !!Array.from(row.querySelectorAll("[aria-label]")).some((e) => labelKey(e.getAttribute("aria-label")) === "more" && k.startsWith("more"));
   if (mode === "code" || via === "label") {
     if (isMore) return true;
@@ -307,13 +314,13 @@ export function placeHost(host: HTMLElement, doc: Document, pathname: string, op
   // Anything but the Recents anchor keeps looking for a Recents heading (it may render later).
   const before = host.dataset.placement === "before";
   const neighbour = before ? host.nextElementSibling : host.previousElementSibling;
-  const settled = before && host.dataset.via === "before-recents";
-  if (settled && host.isConnected && host.dataset.mode === mode && neighbour && neighbour.isConnected && rowMatches(neighbour, mode, host.dataset.via) && usable(neighbour)) {
+  const settled = before && host.dataset.via === "before-section";
+  if (settled && host.isConnected && host.dataset.mode === mode && neighbour && neighbour.isConnected && rowMatches(neighbour, mode, host.dataset.via) && usable(neighbour) && sectionRow(doc, usable) === neighbour) {
     return { placement: "sidebar", mode, row: neighbour, changed: false };
   }
   const anchor = findAnchor(doc, mode, { usable });
   if (anchor) {
-    const isBefore = anchor.via === "before-recents";
+    const isBefore = anchor.via === "before-section";
     const changed = !host.isConnected || (isBefore ? host.nextElementSibling !== anchor.row : host.previousElementSibling !== anchor.row);
     if (changed) {
       if (isBefore) anchor.row.before(host);

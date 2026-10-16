@@ -2,10 +2,11 @@ import * as esbuild from "esbuild";
 import { cpSync, mkdirSync, rmSync } from "node:fs";
 
 const watch = process.argv.includes("--watch");
+const release = process.argv.includes("--release");
 rmSync("dist", { recursive: true, force: true });
 mkdirSync("dist", { recursive: true });
 
-const common = { bundle: true, target: "chrome120", sourcemap: true, logLevel: "info" };
+const common = { bundle: true, target: "chrome120", sourcemap: !release, minify: release, logLevel: "info" };
 
 const builds = [
   // Content scripts must be classic scripts (no ESM), so IIFE.
@@ -17,12 +18,13 @@ const builds = [
 const copyStatic = () => {
   for (const [from, to] of [
     ["src/manifest.json", "dist/manifest.json"],
-    ["tools/widget-preview.html", "dist/widget-preview.html"],
     ["src/popup/popup.html", "dist/popup.html"],
     ["src/popup/popup.css", "dist/popup.css"],
     ["src/options/options.html", "dist/options.html"],
     ["src/options/options.css", "dist/options.css"],
   ]) cpSync(from, to);
+  cpSync("src/icons", "dist/icons", { recursive: true });
+  if (!release) cpSync("tools/widget-preview.html", "dist/widget-preview.html");
 };
 
 if (watch) {

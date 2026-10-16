@@ -172,41 +172,74 @@ describe("findAnchor", () => {
   });
 });
 
-describe("before-recents placement", () => {
-  it("chat: host goes immediately before the Recents heading row, after Pinned", () => {
-    setup(CHAT_REAL("Recents"));
+const NO_PINNED = (html: string) => html.split(String.fromCharCode(10)).filter((l) => !l.includes('class="pinned"')).join(String.fromCharCode(10));
+
+describe("before-section placement", () => {
+  it("chat with Pinned (nested project items + View all): host goes right above the Pinned heading", () => {
+    setup(
+      CHAT_REAL("Recents").replace(
+        '<a href="/chat/p3">Pin three</a>',
+        '<a href="/chat/p3">Pin three</a><div class="proj"><button><span>Project X</span><svg></svg></button><div><a href="/chat/n1">Nested chat</a></div></div><a href="/pinned">View all</a>',
+      ),
+    );
     const a = findAnchor(document, "chat", ok)!;
-    expect(a.via).toBe("before-recents");
-    expect(a.row.id).toBe("rech");
+    expect(a.via).toBe("before-section");
+    expect(a.row.id).toBe("pinh");
     const host = mkHost();
-    const r = placeHost(host, document, "/chat/abc", ok);
-    expect(r.placement).toBe("sidebar");
-    expect(host.nextElementSibling?.id).toBe("rech");
+    expect(placeHost(host, document, "/chat/abc", ok).placement).toBe("sidebar");
+    expect(host.nextElementSibling?.id).toBe("pinh");
     expect(host.dataset.placement).toBe("before");
-    expect(host.closest(".pinned")).toBeNull();
     expect(placeHost(host, document, "/chat/abc", ok).changed).toBe(false);
     expect(document.querySelectorAll(`[${HOST_ATTR}]`)).toHaveLength(1);
   });
-  it("chat: 'Chats and tasks' variant", () => {
-    setup(CHAT_REAL("Chats and tasks"));
+  it("chat without Pinned: before 'Chats and tasks' (and Recents)", () => {
+    setup(NO_PINNED(CHAT_REAL("Chats and tasks")));
+    expect(document.querySelector(".pinned")).toBeNull();
     const host = mkHost();
     placeHost(host, document, "/", ok);
     expect(host.nextElementSibling?.id).toBe("rech");
+    setup(NO_PINNED(CHAT_REAL("Recents")));
+    const h2 = mkHost();
+    placeHost(h2, document, "/", ok);
+    expect(h2.nextElementSibling?.id).toBe("rech");
   });
-  it("code: More then Recents with a + button -> before Recents row", () => {
-    setup(CODE.replace('<div>Recents</div>', '<div id="rech"><span>Recents</span><button aria-label="New session">+</button></div>'));
+  it("code with Pinned: before Pinned; without: before Recents", () => {
+    const pinned = '<div id="pinh"><span>Pinned</span></div><a href="/code/p1">Pinned session</a>';
+    setup(CODE.replace('<div class="recents">', `<div class="pinned">${pinned}</div><div class="recents">`));
     const host = mkHost();
     placeHost(host, document, "/code/s1", ok);
-    expect(host.nextElementSibling?.id).toBe("rech");
+    expect(host.nextElementSibling?.id).toBe("pinh");
+    setup(CODE.replace("<div>Recents</div>", '<div id="rech"><span>Recents</span><button aria-label="New session">+</button></div>'));
+    const h2 = mkHost();
+    placeHost(h2, document, "/code/s1", ok);
+    expect(h2.nextElementSibling?.id).toBe("rech");
   });
-  it("no Recents -> falls back to below More", () => {
-    setup(CHAT_REAL("Archive"));
+  it("Pinned pinned later: host moves above the new Pinned heading", () => {
+    setup(NO_PINNED(CHAT_REAL("Recents")));
+    const host = mkHost();
+    placeHost(host, document, "/", ok);
+    expect(host.nextElementSibling?.id).toBe("rech");
+    document.getElementById("rech")!.parentElement!.insertAdjacentHTML("beforebegin", '<div class="pinned"><div id="pinh"><span>Pinned</span></div><a href="/chat/p1">P</a></div>');
+    const r = placeHost(host, document, "/", ok);
+    expect(r.changed).toBe(true);
+    expect(host.nextElementSibling?.id).toBe("pinh");
+  });
+  it("Pinned heading as a collapsible button with a chevron; nav links never match", () => {
+    setup(CHAT_REAL("Recents").replace('<div id="pinh"><span>Pinned</span></div>', '<div id="pinh"><button type="button"><span>Pinned</span><svg></svg></button></div>'));
+    const host = mkHost();
+    placeHost(host, document, "/", ok);
+    expect(host.nextElementSibling?.id).toBe("pinh");
+    setup(`<nav><div id="r"><a href="/pinned"><span>Pinned</span></a></div><div id="cust"><a href="/customize">Customize</a></div></nav>`);
+    expect(findAnchor(document, "chat", ok)!.row.id).toBe("cust");
+  });
+  it("no section heading -> falls back to below More", () => {
+    setup(CHAT_REAL("Archive").replace("Pinned", "Fixed"));
     const host = mkHost();
     placeHost(host, document, "/", ok);
     expect(host.previousElementSibling?.id).toBe("more");
   });
-  it("re-attaches before Recents after removal, and moves when Recents renders late", () => {
-    setup(CHAT_REAL("Archive"));
+  it("re-attaches after removal, and moves when a heading renders late", () => {
+    setup(CHAT_REAL("Archive").replace("Pinned", "Fixed"));
     const host = mkHost();
     placeHost(host, document, "/", ok);
     document.querySelector("#rech span")!.textContent = "Recents";

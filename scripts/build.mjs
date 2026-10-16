@@ -9,7 +9,7 @@ const common = { bundle: true, target: "chrome120", sourcemap: true, logLevel: "
 
 const builds = [
   // Content scripts must be classic scripts (no ESM), so IIFE.
-  { ...common, entryPoints: { inject: "src/capture/inject.ts", bridge: "src/bridge.ts" }, format: "iife", outdir: "dist" },
+  { ...common, entryPoints: { inject: "src/capture/inject.ts", bridge: "src/bridge.ts", widget: "src/widget/widget.ts" }, format: "iife", outdir: "dist" },
   { ...common, entryPoints: { sw: "src/sw.ts" }, format: "esm", outdir: "dist" },
   { ...common, entryPoints: { popup: "src/popup/popup.ts", options: "src/options/options.ts" }, format: "iife", outdir: "dist" },
 ];
@@ -17,6 +17,7 @@ const builds = [
 const copyStatic = () => {
   for (const [from, to] of [
     ["src/manifest.json", "dist/manifest.json"],
+    ["tools/widget-preview.html", "dist/widget-preview.html"],
     ["src/popup/popup.html", "dist/popup.html"],
     ["src/popup/popup.css", "dist/popup.css"],
     ["src/options/options.html", "dist/options.html"],

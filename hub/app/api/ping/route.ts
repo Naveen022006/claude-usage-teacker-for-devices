@@ -6,6 +6,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export function GET(req: NextRequest) {
-  if (!isAuthorized(req, false)) return unauthorized();
+  if (!isAuthorized(req)) return unauthorized();
   return ok({ name: "Claude Usage Hub", v: 1 });
 }

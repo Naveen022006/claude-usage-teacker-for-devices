@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  if (!isAuthorized(req, true)) return unauthorized();
+  if (!isAuthorized(req)) return unauthorized();
   try {
     const [devices, account, daily] = await Promise.all([loadDevices(), loadAccount(), loadDaily(30)]);
     const view = mergedView(devices);

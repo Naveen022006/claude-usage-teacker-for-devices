@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
-  if (!isAuthorized(req, false)) return unauthorized();
+  if (!isAuthorized(req)) return unauthorized();
   const declared = Number(req.headers.get("content-length") ?? 0);
   if (declared > MAX_BODY) return fail("payload too large", 413);
   const text = await req.text();

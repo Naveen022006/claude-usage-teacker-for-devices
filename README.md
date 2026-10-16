@@ -9,7 +9,7 @@ counts (never message text) to your own **Usage Hub**, which adds everything up 
 ## Components
 | Component | Where | What it does |
 |---|---|---|
-| Chrome extension | `src/` | Observes claude.ai streams, estimates tokens, shows a popup, pushes to the hub |
+| Chrome extension | `src/` | Observes claude.ai streams, estimates tokens, shows an in-page usage widget on claude.ai (plus a minimal popup), pushes to the hub |
 | Claude Code daemon | `daemon/` | `claude-usage-daemon` reads local Claude Code / Desktop transcripts (exact tokens), pushes to the hub |
 | Usage Hub | `hub/` (Next.js on Vercel) | Merges all devices, shows device x model usage and plan limits |
 
@@ -44,7 +44,7 @@ Extension: options page -> Hub URL, Hub token, Test connection, enable sync.
 | `docs/03-data-model.md` | Event schema, storage, aggregation |
 | `docs/04-device-sync.md` | **Contract** between clients and the hub |
 | `docs/05-extension-structure.md` | Manifest V3, file layout, permissions |
-| `docs/06-ui.md` | Popup / options page |
+| `docs/06-ui.md` | In-page widget (primary UI), popup, options page |
 | `docs/07-testing.md` | How to verify accuracy |
 | `docs/08-roadmap.md` | Phases |
 | `docs/09-claude-code-daemon.md` | Daemon install and usage |

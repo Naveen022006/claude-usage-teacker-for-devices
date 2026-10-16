@@ -68,6 +68,7 @@ export interface Settings {
   charsPerToken: number; // 2.5–5, default 3.6
   hubToken: string; // sent as "Authorization: Bearer <token>" when non-empty
   pollAccountUsage: boolean;
+  showWidget: boolean; // in-page widget on claude.ai
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -75,7 +76,8 @@ export const DEFAULT_SETTINGS: Settings = {
   syncEnabled: false,
   charsPerToken: 3.6,
   hubToken: "",
-  pollAccountUsage: false,
+  pollAccountUsage: true,
+  showWidget: true,
 };
 
 export interface SyncState {

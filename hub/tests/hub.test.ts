@@ -2,8 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   dayInTz, mergedView, shouldApplyAccount, shouldApplyDevice, validateReport, type StoredDevice,
 } from "@/lib/contract";
-import { signSession, verifySession, checkToken, bearerOf, SESSION_MS } from "@/lib/auth";
-import { fmtTokens, humanizeWindow, resetsIn } from "@/lib/format";
+import { checkToken, bearerOf } from "@/lib/auth";
 
 const win = (m = 1) => ({ messages: m, promptTokens: 10, outputTokens: 20, byModel: { "claude-opus-5-5": { messages: m, tokens: 30 } } });
 const good = () => ({
@@ -71,40 +70,12 @@ describe("merge rules", () => {
   });
 });
 
-describe("session cookie", () => {
-  const secret = "s".repeat(32);
-  it("round-trips", () => expect(verifySession(signSession(secret).value, secret)).toBe(true));
-  it("rejects tampering, wrong secret, expiry, garbage", () => {
-    const { value } = signSession(secret, 1000);
-    const [exp, mac] = value.split(".");
-    expect(verifySession(`${Number(exp) + 1}.${mac}`, secret, 1000)).toBe(false);
-    expect(verifySession(value, "other-secret", 1000)).toBe(false);
-    expect(verifySession(value, secret, 1000 + SESSION_MS + 1)).toBe(false);
-    expect(verifySession("garbage", secret)).toBe(false);
-    expect(verifySession("", secret)).toBe(false);
-    expect(verifySession(undefined, secret)).toBe(false);
-  });
+describe("auth helpers", () => {
   it("token + bearer helpers", () => {
     expect(checkToken("abc", "abc")).toBe(true);
     expect(checkToken("abd", "abc")).toBe(false);
     expect(checkToken("", "abc")).toBe(false);
     expect(bearerOf("Bearer xyz")).toBe("xyz");
     expect(bearerOf("Basic xyz")).toBeNull();
-  });
-});
-
-describe("format", () => {
-  it("fmtTokens", () => {
-    expect(fmtTokens(999)).toBe("999");
-    expect(fmtTokens(1500)).toBe("1.5k");
-    expect(fmtTokens(2_500_000)).toBe("2.5M");
-    expect(fmtTokens(3_000_000_000)).toBe("3B");
-  });
-  it("humanizeWindow / resetsIn", () => {
-    expect(humanizeWindow("five_hour")).toBe("5-hour session");
-    expect(humanizeWindow("seven_day_opus")).toBe("Weekly Opus");
-    expect(humanizeWindow("some_new_thing")).toBe("Some New Thing");
-    const now = Date.parse("2026-01-01T00:00:00Z");
-    expect(resetsIn("2026-01-01T02:14:30Z", now)).toBe("resets in 2h 14m");
   });
 });

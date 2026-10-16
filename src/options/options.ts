@@ -9,6 +9,7 @@ const syncEl = $<HTMLInputElement>("syncEnabled");
 const cptEl = $<HTMLInputElement>("cpt");
 const cptOut = $<HTMLOutputElement>("cptOut");
 const pollEl = $<HTMLInputElement>("poll");
+const widgetEl = $<HTMLInputElement>("showWidget");
 const statusEl = $("status");
 
 function setStatus(msg: string, kind: "" | "ok" | "warn" | "bad" = ""): void {
@@ -45,6 +46,7 @@ function fill(s: Settings): void {
   cptEl.value = String(s.charsPerToken);
   cptOut.textContent = Number(s.charsPerToken).toFixed(1);
   pollEl.checked = s.pollAccountUsage;
+  widgetEl.checked = s.showWidget;
 }
 
 async function load(): Promise<void> {
@@ -66,6 +68,7 @@ function currentSettings(): Partial<Settings> {
     syncEnabled: syncEl.checked,
     charsPerToken: Number(cptEl.value),
     pollAccountUsage: pollEl.checked,
+    showWidget: widgetEl.checked,
   };
 }
 

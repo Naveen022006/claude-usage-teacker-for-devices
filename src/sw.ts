@@ -3,12 +3,21 @@
 
 import { clampCharsPerToken, estimateTokens } from "./capture/tokens";
 import { computeAggregates, pruneEvents } from "./shared/aggregate";
-import type { PageMessage, UiRequest, UiResponse, UiResponseData, UiState } from "./shared/messages";
+import {
+  NS,
+  type HubStateResult,
+  type PageMessage,
+  type UiRequest,
+  type UiResponse,
+  type UiResponseData,
+  type UiState,
+  type WidgetState,
+} from "./shared/messages";
 import { DEFAULT_SYNC_STATE, type Settings, type SyncState, type UsageEvent } from "./shared/types";
-import { validatePageMessage } from "./shared/validate";
+import { validatePageMessage, validateWidgetRequest } from "./shared/validate";
 import * as store from "./storage";
 import { fetchAccountUsage } from "./sync/accountUsage";
-import { buildReport, normalizeBase, ping, sendReport } from "./sync/hub";
+import { buildReport, fetchHubState, normalizeBase, ping, sendReport } from "./sync/hub";
 
 const HEARTBEAT = "heartbeat";
 const SYNC_DEBOUNCE_MS = 3000;
@@ -58,11 +67,19 @@ async function pollAccountUsage(): Promise<void> {
 
 chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
   if (sender.tab) {
-    if (sender.url?.startsWith("https://claude.ai/")) {
+    if (sender.url?.startsWith("https://claude.ai/") && sender.id === chrome.runtime.id) {
+      // The widget (ISOLATED content script) is the only content script that gets a response.
+      const w = validateWidgetRequest(msg);
+      if (w) {
+        handleWidget(w.type).then(sendResponse, (e) =>
+          sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }),
+        );
+        return true;
+      }
       const m = validatePageMessage(msg);
       if (m) void handlePage(m).catch((e) => console.warn("[claude-usage] page message failed", e));
     }
-    return false; // content scripts never get a response
+    return false;
   }
   if (sender.id !== chrome.runtime.id) return false;
   handleUi(msg as UiRequest).then(sendResponse, (e) =>
@@ -107,6 +124,7 @@ async function handlePage(m: PageMessage): Promise<void> {
         await store.set({ syncState: { ...s, queue: s.queue + 1 } });
       }
       scheduleSync();
+      void broadcastStateChanged();
       return;
     }
     case "org-seen":
@@ -115,6 +133,92 @@ async function handlePage(m: PageMessage): Promise<void> {
     case "limit-hint":
       await store.set({ limitHint: m.payload });
       return;
+  }
+}
+
+/** Tells open claude.ai tabs (the widget) to refresh. Fire-and-forget. */
+async function broadcastStateChanged(): Promise<void> {
+  try {
+    const tabs = await chrome.tabs.query({ url: "https://claude.ai/*" });
+    for (const t of tabs) {
+      if (t.id !== undefined) chrome.tabs.sendMessage(t.id, { ns: NS, type: "state-changed" }).catch(() => {});
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+// ---- widget ----
+
+const HUB_CACHE_MS = 30_000;
+const WIDGET_USAGE_STALE_MS = 2 * 60_000;
+const WIDGET_USAGE_MIN_GAP_MS = 60_000;
+let hubCache: { key: string; at: number; result: HubStateResult } | null = null;
+let lastWidgetUsageAttempt = 0;
+
+async function getHubState(settings: Settings): Promise<WidgetState["hub"]> {
+  const none = { configured: false, ok: false, fetchedAt: 0, devices: [] };
+  if (!settings.hubUrl.trim()) return none;
+  const pattern = hostPattern(settings.hubUrl);
+  if (!pattern) return { ...none, configured: true, error: "Invalid Hub URL" };
+  if (!(await chrome.permissions.contains({ origins: [pattern] }))) {
+    return { ...none, configured: true, error: `Host permission not granted for ${pattern}` };
+  }
+  const key = normalizeBase(settings.hubUrl) + "\n" + settings.hubToken;
+  const now = Date.now();
+  if (!hubCache || hubCache.key !== key || now - hubCache.at > HUB_CACHE_MS) {
+    const result = await fetchHubState(settings.hubUrl, settings.hubToken);
+    hubCache = { key, at: now, result };
+  }
+  const r = hubCache.result;
+  return { configured: true, ok: r.ok, error: r.error, fetchedAt: r.fetchedAt, devices: r.devices };
+}
+
+/** Refresh account usage in the background when the widget asks and it is stale. */
+function maybeRefreshUsageForWidget(settings: Settings, orgId: string | null, usage: WidgetState["accountUsage"]): void {
+  const now = Date.now();
+  if (!settings.pollAccountUsage || !orgId) return;
+  if (now - (usage?.fetchedAt ?? 0) < WIDGET_USAGE_STALE_MS) return;
+  if (now - lastWidgetUsageAttempt < WIDGET_USAGE_MIN_GAP_MS) return;
+  lastUsageAttempt = lastWidgetUsageAttempt = now;
+  void fetchAccountUsage(orgId)
+    .then(async (u) => {
+      if (u) {
+        await store.set({ accountUsage: u });
+        void broadcastStateChanged();
+      }
+    })
+    .catch((e) => console.warn("[claude-usage] widget usage refresh failed", e));
+}
+
+async function handleWidget(type: "get-widget-state" | "open-options"): Promise<UiResponse> {
+  try {
+    if (type === "open-options") {
+      await chrome.runtime.openOptionsPage();
+      return { ok: true, data: null };
+    }
+    const [device, settings, syncState, accountUsage, events, orgId] = await Promise.all([
+      store.ensureDevice(),
+      store.get("settings"),
+      store.get("syncState"),
+      store.get("accountUsage"),
+      store.get("events"),
+      store.get("orgId"),
+    ]);
+    maybeRefreshUsageForWidget(settings, orgId, accountUsage);
+    const now = Date.now();
+    const state: WidgetState = {
+      device,
+      aggregates: computeAggregates(events, now),
+      accountUsage,
+      syncState,
+      showWidget: settings.showWidget,
+      hub: await getHubState(settings),
+      now,
+    };
+    return { ok: true, data: state };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
@@ -210,6 +314,7 @@ async function handleUi(req: UiRequest): Promise<UiResponse> {
         if (p.charsPerToken !== undefined) next.charsPerToken = clampCharsPerToken(p.charsPerToken);
         if (typeof p.hubToken === "string") next.hubToken = p.hubToken.slice(0, 200);
         if (typeof p.pollAccountUsage === "boolean") next.pollAccountUsage = p.pollAccountUsage;
+        if (typeof p.showWidget === "boolean") next.showWidget = p.showWidget;
         await store.set({ settings: next });
         if (typeof req.deviceName === "string") {
           const name = req.deviceName.trim().slice(0, 40);

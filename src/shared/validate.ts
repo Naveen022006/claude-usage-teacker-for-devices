@@ -1,5 +1,5 @@
 import type { CapturedEvent, LimitHint } from "./types";
-import { NS, type PageMessage } from "./messages";
+import { NS, type PageMessage, type WidgetRequest } from "./messages";
 
 const STATUSES = ["ok", "error", "aborted"];
 const KINDS = ["new", "retry"];
@@ -59,4 +59,12 @@ export function validatePageMessage(x: unknown): PageMessage | null {
     default:
       return null;
   }
+}
+
+/** Validates the two widget request types (get-widget-state / open-options). They carry no data fields. */
+export function validateWidgetRequest(x: unknown): WidgetRequest | null {
+  if (!isObj(x) || x.ns !== NS) return null;
+  if (x.type === "get-widget-state") return { ns: NS, type: "get-widget-state" };
+  if (x.type === "open-options") return { ns: NS, type: "open-options" };
+  return null;
 }

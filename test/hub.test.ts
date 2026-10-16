@@ -35,3 +35,16 @@ describe("hub client", () => {
     expect((await ping("https://h.example", "t")).ok).toBe(false);
   });
 });
+
+import { fetchHubState } from "../src/sync/hub";
+describe("fetchHubState", () => {
+  it("GETs /api/state with Bearer and never throws", async () => {
+    const f = vi.fn().mockResolvedValueOnce(json(200, { ok: true, devices: [] })).mockRejectedValueOnce(new Error("boom")).mockResolvedValueOnce(json(401, {}));
+    vi.stubGlobal("fetch", f);
+    expect(await fetchHubState("https://h.example/", "tok")).toMatchObject({ ok: true, devices: [] });
+    expect(f.mock.calls[0][0]).toBe("https://h.example/api/state");
+    expect(f.mock.calls[0][1].headers.Authorization).toBe("Bearer tok");
+    expect(await fetchHubState("https://h.example", "tok")).toMatchObject({ ok: false, error: "boom" });
+    expect(await fetchHubState("https://h.example", "tok")).toMatchObject({ ok: false, error: "HTTP 401 (check hub token)" });
+  });
+});

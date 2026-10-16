@@ -10,8 +10,12 @@ src/
     claudeParser.ts  # maps SSE events → partial UsageEvent
     tokens.ts        # char → token estimate
   bridge.ts          # ISOLATED content script
-  sw.ts              # service worker: storage, aggregates, alarms, sync
-  sync/hub.ts
+  widget/
+    widget.ts        # ISOLATED content script (document_idle): closed-shadow-DOM usage widget
+    helpers.ts       # pure formatters / device merge (tested)
+    styles.ts        # constructable stylesheet text
+  sw.ts              # service worker: storage, aggregates, alarms, sync, widget state
+  sync/hub.ts        # report/ping + fetchHubState (GET /api/state)
   popup/ popup.html popup.ts popup.css
   options/ options.html options.ts
 test/
@@ -33,7 +37,9 @@ test/
     { "matches": ["https://claude.ai/*"], "js": ["inject.js"],
       "run_at": "document_start", "world": "MAIN" },
     { "matches": ["https://claude.ai/*"], "js": ["bridge.js"],
-      "run_at": "document_start" }
+      "run_at": "document_start" },
+    { "matches": ["https://claude.ai/*"], "js": ["widget.js"],
+      "run_at": "document_idle" }
   ],
   "action": { "default_popup": "popup.html" },
   "options_page": "options.html"
@@ -44,3 +50,16 @@ test/
 `inject → window.postMessage({ns:"claude-usage", type:"usage-event", payload})`
 `bridge` checks `event.source === window && data.ns === "claude-usage"`, then
 `chrome.runtime.sendMessage`. SW validates every field type before storing.
+
+## Widget messaging and permissions
+No new permissions: the widget relies on `host_permissions` for claude.ai; the hub is reached by the
+service worker through the existing optional host permission. Content script -> SW (only when
+sender.tab is on https://claude.ai/; wrapped `{ns:"claude-usage", type}`):
+- `get-widget-state` -> `WidgetState` (device, local aggregates, accountUsage, syncState, showWidget,
+  hub{configured, ok, error?, fetchedAt, devices[]}). Hub state is fetched with the Bearer token
+  (`fetchHubState`, 10 s timeout, never throws) and cached in memory for 30 s. If account usage is
+  older than 2 min and an orgId is known, the SW refreshes it (max once per minute).
+- `open-options` -> `chrome.runtime.openOptionsPage()`.
+SW -> widget: `chrome.tabs.sendMessage(tabId, {ns, type:"state-changed"})` after each new usage event
+or account-usage refresh. The widget stores `widgetUi` ({expanded, bottom}) in `chrome.storage.local`.
+These are the only content-script messages that receive a response.

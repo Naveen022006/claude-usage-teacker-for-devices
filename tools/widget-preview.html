@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Widget preview</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{font:16px system-ui;margin:24px;background:#faf9f5;color:#1f1e1d}@media(prefers-color-scheme:dark){body{background:#262624;color:#f0eee6}}</style>
+</head><body>
+<h1>Widget preview (stub chrome.*)</h1>
+<p>Open <code>dist/widget-preview.html</code> via a local file or static server after <code>npm run build</code>. The widget sits bottom-right.</p>
+<script>
+  // Fake extension APIs so dist/widget.js runs outside Chrome.
+  (function () {
+    var now = Date.now(), min = 60000;
+    var agg = function (m) { return { messages: m, promptTokens: m * 900, outputTokens: m * 400, byModel: { "claude-sonnet-5-5": { messages: m, tokens: m * 1300 }, "claude-haiku-4-5": { messages: Math.floor(m / 3), tokens: m * 200 } } }; };
+    var windows = function (m) { return { today: agg(m), last5h: agg(Math.ceil(m / 2)), last7d: agg(m * 4) }; };
+    var state = {
+      device: { deviceId: "me", deviceName: "Chrome" }, aggregates: windows(6),
+      accountUsage: { fetchedAt: now, windows: [
+        { name: "five_hour", utilization: 42, resetsAt: new Date(now + 134 * min).toISOString() },
+        { name: "seven_day", utilization: 71, resetsAt: new Date(now + 3 * 86400000).toISOString() },
+        { name: "seven_day_opus", utilization: 92, resetsAt: new Date(now + 2 * 86400000).toISOString() } ] },
+      syncState: { lastOkAt: now - 20000, lastAttemptAt: now, lastError: null, queue: 0 }, showWidget: true, now: now,
+      hub: { configured: true, ok: true, fetchedAt: now, devices: [
+        { deviceId: "me", deviceName: "Chrome", source: "chrome", estimated: true, receivedAt: now, fresh: true, windows: windows(6) },
+        { deviceId: "cc", deviceName: "work-laptop", source: "claude-code", estimated: false, receivedAt: now - min, fresh: true, windows: windows(30) },
+        { deviceId: "dk", deviceName: "home-pc", source: "desktop", estimated: false, receivedAt: now - 120 * min, fresh: false, windows: windows(9) } ] }
+    };
+    var store = {};
+    window.chrome = {
+      runtime: { id: "preview",
+        sendMessage: function (m) { return Promise.resolve(m.type === "get-widget-state" ? { ok: true, data: Object.assign({}, state, { now: Date.now() }) } : { ok: true, data: null }); },
+        onMessage: { addListener: function () {}, removeListener: function () {} } },
+      storage: { local: { get: function (k) { var o = {}; if (k in store) o[k] = store[k]; return Promise.resolve(o); }, set: function (o) { Object.assign(store, o); return Promise.resolve(); } },
+        onChanged: { addListener: function () {}, removeListener: function () {} } }
+    };
+  })();
+</script>
+<script src="widget.js"></script>
+</body></html>

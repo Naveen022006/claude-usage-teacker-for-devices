@@ -7,6 +7,7 @@
 import type {
   Aggregates,
   AccountUsage,
+  Source,
   CapturedEvent,
   DeviceInfo,
   LimitHint,
@@ -21,6 +22,48 @@ export type PageMessage =
   | { ns: typeof NS; type: "usage-event"; payload: CapturedEvent }
   | { ns: typeof NS; type: "org-seen"; payload: { orgId: string } }
   | { ns: typeof NS; type: "limit-hint"; payload: LimitHint };
+
+/**
+ * Requests from the claude.ai widget content script (sender.tab on https://claude.ai/ only).
+ * These are the ONLY content-script messages that get a response. Wrapped with `ns` like PageMessage.
+ */
+export type WidgetRequest =
+  | { ns: typeof NS; type: "get-widget-state" }
+  | { ns: typeof NS; type: "open-options" };
+
+/** SW -> widget broadcast (chrome.tabs.sendMessage) after a new usage event / account refresh. */
+export interface StateChangedMessage {
+  ns: typeof NS;
+  type: "state-changed";
+}
+
+/** One device as reported by the hub's GET /api/state, stripped to what the widget needs. */
+export interface HubDevice {
+  deviceId: string;
+  deviceName: string;
+  source: Source;
+  estimated: boolean;
+  receivedAt: number;
+  fresh: boolean;
+  windows: Aggregates;
+}
+
+export interface HubStateResult {
+  ok: boolean;
+  error?: string;
+  fetchedAt: number;
+  devices: HubDevice[];
+}
+
+export interface WidgetState {
+  device: DeviceInfo;
+  aggregates: Aggregates;
+  accountUsage: AccountUsage | null;
+  syncState: SyncState;
+  showWidget: boolean;
+  hub: { configured: boolean; ok: boolean; error?: string; fetchedAt: number; devices: HubDevice[] };
+  now: number;
+}
 
 /** Requests from popup / options to the service worker. */
 export type UiRequest =

@@ -84,10 +84,13 @@ function install(): void {
     }
     const res = await orig.apply(this ?? window, args);
     try {
-      if (metaP && res.body) {
+      // Non-2xx (e.g. 429 rate limit) carries a JSON error, not a reply — don't count it.
+      if (metaP && res.ok && res.body) {
         const [forPage, forUs] = res.body.tee();
+        // Build the page's Response before starting our parse; once tee()'d, `res` can't be returned.
+        const forPageRes = new Response(forPage, { status: res.status, statusText: res.statusText, headers: res.headers });
         parseStream(forUs, metaP).catch((e) => console.warn("[deskbuddy]", e));
-        return new Response(forPage, { status: res.status, statusText: res.statusText, headers: res.headers });
+        return forPageRes;
       }
     } catch (e) {
       console.warn("[deskbuddy]", e);

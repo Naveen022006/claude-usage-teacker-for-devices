@@ -2,7 +2,7 @@
 // the SW may be killed at any time, which is fine because every report is a full snapshot.
 
 import { clampCharsPerToken, estimateTokens } from "./capture/tokens";
-import { addContribution, applyReading, attributionView, emptyLedger, recordHubSnapshot, replyWeight } from "./shared/attribution";
+import { addContribution, applyReading, attributionView, emptyLedger, normalizeLedger, recordHubSnapshot, replyWeight } from "./shared/attribution";
 import { computeAggregates, pruneEvents } from "./shared/aggregate";
 import {
   NS,
@@ -380,7 +380,7 @@ async function handleWidget(type: "get-widget-state" | "open-options", orgHint?:
       device,
       aggregates: computeAggregates(events, now),
       accountUsage,
-      attribution: attributionView({ ...emptyLedger(), ...ledger }),
+      attribution: attributionView(normalizeLedger(ledger)),
       plan,
       limitHint,
       syncState,

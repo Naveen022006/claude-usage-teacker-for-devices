@@ -27,9 +27,12 @@ export interface WindowLedger {
   other: number;
 }
 
+export type PendingWeights = Record<string, number>;
+
 export interface Ledger {
   windows: Partial<Record<AttrWindow, WindowLedger>>;
-  pending: Contribution[];
+  /** Per window: summed reply weight per model since that window's utilisation last rose. */
+  pendingW: Partial<Record<AttrWindow, PendingWeights>>;
   lastReadingAt: number;
   /** last seen last5h tokens per hub device and model, to turn snapshots into deltas */
   hubPrev: Record<string, Record<string, number>>;
@@ -39,12 +42,33 @@ export interface Ledger {
 export type AttributionView = Partial<Record<AttrWindow, { byModel: Record<string, number>; other: number }>>;
 
 export const CYCLE_TOLERANCE_MS = 120_000;
-export const PENDING_MAX_AGE_MS = 30 * 60_000;
-const MAX_PENDING = 200;
 const MAX_HUB_DEVICES = 50;
 
 export function emptyLedger(): Ledger {
-  return { windows: {}, pending: [], lastReadingAt: 0, hubPrev: {} };
+  return { windows: {}, pendingW: {}, lastReadingAt: 0, hubPrev: {} };
+}
+
+/** Tolerant loader for a stored ledger; migrates the old `pending` contribution list into `pendingW`. */
+export function normalizeLedger(raw: unknown): Ledger {
+  const base = emptyLedger();
+  if (!raw || typeof raw !== "object") return base;
+  const r = raw as Record<string, unknown>;
+  const out: Ledger = {
+    windows: r.windows && typeof r.windows === "object" ? (r.windows as Ledger["windows"]) : base.windows,
+    pendingW: r.pendingW && typeof r.pendingW === "object" ? (r.pendingW as Ledger["pendingW"]) : {},
+    lastReadingAt: typeof r.lastReadingAt === "number" ? r.lastReadingAt : 0,
+    hubPrev: r.hubPrev && typeof r.hubPrev === "object" ? (r.hubPrev as Ledger["hubPrev"]) : {},
+  };
+  if (Array.isArray(r.pending)) {
+    const sums: PendingWeights = {};
+    for (const c of r.pending as Partial<Contribution>[]) {
+      if (c && typeof c.model === "string" && typeof c.weight === "number" && c.weight > 0 && Number.isFinite(c.weight)) {
+        sums[c.model] = (sums[c.model] ?? 0) + c.weight;
+      }
+    }
+    if (Object.keys(sums).length) for (const w of ATTR_WINDOWS) out.pendingW[w] = { ...sums, ...(out.pendingW[w] ?? {}) };
+  }
+  return out;
 }
 
 /** Cost factor relative to Sonnet, by substring of the model id. */
@@ -70,7 +94,14 @@ export function tokenWeight(model: string, tokens: number): number {
 
 export function addContribution(l: Ledger, c: Contribution): Ledger {
   if (!(c.weight >= 0) || !Number.isFinite(c.weight) || !Number.isFinite(c.ts)) return l;
-  return { ...l, pending: [...l.pending, { ...c, weight: Math.max(c.weight, 1e-9) }].slice(-MAX_PENDING) };
+  const weight = Math.max(c.weight, 1e-9);
+  const pendingW: Ledger["pendingW"] = { ...l.pendingW };
+  for (const w of ATTR_WINDOWS) {
+    const cur = { ...(pendingW[w] ?? {}) };
+    cur[c.model] = (cur[c.model] ?? 0) + weight;
+    pendingW[w] = cur;
+  }
+  return { ...l, pendingW };
 }
 
 const total = (w: WindowLedger): number => Object.values(w.byModel).reduce((a, b) => a + b, 0) + w.other;
@@ -83,14 +114,15 @@ function sameCycle(a: string, b: string): boolean {
   return Math.abs(ta - tb) <= CYCLE_TOLERANCE_MS;
 }
 
-/** Adds `delta` points to `w`, split across `pending` by weight (or to `other` when there are none). */
-function distribute(w: WindowLedger, delta: number, pending: Contribution[]): void {
-  const sum = pending.reduce((a, c) => a + c.weight, 0);
-  if (!pending.length || !(sum > 0)) {
+/** Adds `delta` points to `w`, split across pending weights (or to `other` when there are none). */
+function distribute(w: WindowLedger, delta: number, pending: PendingWeights | undefined): void {
+  const entries = Object.entries(pending ?? {}).filter(([, v]) => v > 0);
+  const sum = entries.reduce((a, [, v]) => a + v, 0);
+  if (!entries.length || !(sum > 0)) {
     w.other += delta;
     return;
   }
-  for (const c of pending) w.byModel[c.model] = (w.byModel[c.model] ?? 0) + (delta * c.weight) / sum;
+  for (const [m, v] of entries) w.byModel[m] = (w.byModel[m] ?? 0) + (delta * v) / sum;
 }
 
 /** Scales everything down proportionally so the total equals `util` (server-side correction). */
@@ -107,7 +139,8 @@ function scaleTo(w: WindowLedger, util: number): void {
 
 /**
  * Applies one account-usage reading taken at `now`. Returns a new ledger; never mutates the input.
- * Contributions with ts <= now are consumed (after BOTH windows are updated); older than 30 min are dropped.
+ * Each window consumes its own pending weights, and only when its utilisation actually rose (or a new cycle
+ * began): the server often lags a few seconds behind a reply, so a zero delta must keep the replies pending.
  */
 export function applyReading(
   ledger: Ledger,
@@ -116,9 +149,8 @@ export function applyReading(
 ): Ledger {
   if (!usage) return ledger;
   if (now < ledger.lastReadingAt) return ledger; // out-of-order (stale) reading
-  const usable = ledger.pending.filter((c) => now - c.ts <= PENDING_MAX_AGE_MS);
-  const eligible = usable.filter((c) => c.ts <= now);
   const windows: Ledger["windows"] = { ...ledger.windows };
+  const pendingW: Ledger["pendingW"] = { ...ledger.pendingW };
   let touched = false;
   for (const name of ATTR_WINDOWS) {
     const aw = usage.windows.find((w) => w.name === name);
@@ -127,28 +159,27 @@ export function applyReading(
     const util = Math.min(100, Math.max(0, aw.utilization));
     const cycle = aw.resetsAt ?? "";
     const prev = windows[name];
+    const pend = pendingW[name];
     if (!prev || !sameCycle(prev.cycle, cycle)) {
       const fresh: WindowLedger = { cycle, lastUtil: util, byModel: {}, other: 0 };
-      // First sight: whatever is already used happened before tracking. Rollover: the new cycle's first
-      // points can only come from replies we just saw.
-      if (prev && util > 0) distribute(fresh, util, eligible);
+      // First sight: whatever is already used happened before tracking (pending replies are inside it).
+      // Rollover: the new cycle's first points can only come from replies we just saw.
+      if (prev && util > 0) distribute(fresh, util, pend);
       else fresh.other = util;
       windows[name] = fresh;
+      delete pendingW[name];
       continue;
     }
     const w: WindowLedger = { cycle: prev.cycle, lastUtil: util, byModel: { ...prev.byModel }, other: prev.other };
     const delta = util - (prev.lastUtil ?? util);
-    if (delta > 0) distribute(w, delta, eligible);
-    else if (delta < 0) scaleTo(w, util);
+    if (delta > 0) {
+      distribute(w, delta, pend);
+      delete pendingW[name];
+    } else if (delta < 0) scaleTo(w, util);
     windows[name] = w;
   }
   if (!touched) return ledger;
-  return {
-    ...ledger,
-    windows,
-    pending: usable.filter((c) => c.ts > now),
-    lastReadingAt: now,
-  };
+  return { ...ledger, windows, pendingW, lastReadingAt: now };
 }
 
 export interface HubDeviceLite {

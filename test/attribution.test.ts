@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addContribution, applyReading, emptyLedger, modelFactor, recordHubSnapshot, replyWeight, type Ledger,
+  addContribution, applyReading, emptyLedger, modelFactor, normalizeLedger, recordHubSnapshot, replyWeight, type Ledger,
 } from "../src/shared/attribution";
 import { attributionRows, formatPoints } from "../src/widget/helpers";
 
@@ -42,7 +42,7 @@ describe("applyReading", () => {
     l = applyReading(l, usage(35, 11), T0 + 5000);
     expect(l.windows.five_hour!.byModel.opus).toBeCloseTo(5);
     expect(l.windows.seven_day!.byModel.opus).toBeCloseTo(1);
-    expect(l.pending).toEqual([]);
+    expect(l.pendingW).toEqual({});
     expect(sum(l, "five_hour")).toBeCloseTo(35);
     expect(sum(l, "seven_day")).toBeCloseTo(11);
   });
@@ -62,21 +62,72 @@ describe("applyReading", () => {
     expect(l.windows.five_hour!.other).toBeCloseTo(13);
   });
 
-  it("keeps contributions newer than the reading pending", () => {
-    let l = applyReading(emptyLedger(), usage(10, 1), T0);
-    l = addContribution(l, contrib("opus", 1, T0 + 10_000));
-    l = applyReading(l, usage(12, 1), T0 + 5000);
-    expect(l.windows.five_hour!.other).toBeCloseTo(12);
-    expect(l.pending).toHaveLength(1);
+  it("zero delta keeps the reply pending; the later rise goes to its model (the bug)", () => {
+    let l = applyReading(emptyLedger(), usage(10, 5), T0);
+    l = addContribution(l, contrib("opus", 10, T0 + 1000));
+    l = applyReading(l, usage(10, 5), T0 + 5000); // server has not updated yet
+    expect(l.pendingW.five_hour).toEqual({ opus: 10 });
+    expect(l.pendingW.seven_day).toEqual({ opus: 10 });
+    l = applyReading(l, usage(12, 7), T0 + 60_000);
+    expect(l.windows.five_hour!.byModel.opus).toBeCloseTo(2);
+    expect(l.windows.seven_day!.byModel.opus).toBeCloseTo(2);
+    expect(l.windows.five_hour!.other).toBeCloseTo(10);
+    expect(l.pendingW).toEqual({});
   });
 
-  it("drops stale pending without assigning", () => {
-    let l = applyReading(emptyLedger(), usage(10, 1), T0);
+  it("weekly +1 at the end is split across many replies; 5h consumption does not remove them from weekly", () => {
+    let l = applyReading(emptyLedger(), usage(0, 0), T0);
+    let t = T0;
+    for (let i = 0; i < 30; i++) {
+      t += 60_000;
+      l = addContribution(l, contrib(i % 2 ? "opus" : "sonnet", 10, t));
+      if (i % 10 === 9) l = applyReading(l, usage((i + 1) / 10, 0), t + 4000); // 5h moves, weekly doesn't
+    }
+    expect(l.pendingW.five_hour).toBeUndefined();
+    expect(l.pendingW.seven_day).toEqual({ opus: 150, sonnet: 150 });
+    l = applyReading(l, usage(3, 1), t + 10_000);
+    expect(l.windows.seven_day!.byModel.opus).toBeCloseTo(0.5);
+    expect(l.windows.seven_day!.byModel.sonnet).toBeCloseTo(0.5);
+    expect(l.windows.seven_day!.other).toBeCloseTo(0);
+  });
+
+  it("first sight clears pending", () => {
+    let l = addContribution(emptyLedger(), contrib("opus", 5, T0 - 1000));
+    l = applyReading(l, usage(20, 4), T0);
+    expect(l.pendingW).toEqual({});
+    expect(l.windows.five_hour!.other).toBe(20);
+  });
+
+  it("rollover distributes pending to the new cycle", () => {
+    let l = applyReading(emptyLedger(), usage(50, 10), T0);
+    l = addContribution(l, contrib("opus", 3, T0 + 1000));
+    l = addContribution(l, contrib("sonnet", 1, T0 + 2000));
+    l = applyReading(l, usage(4, 10, "2026-01-01T19:00:00Z"), T0 + 5 * 3600_000);
+    expect(l.windows.five_hour!.byModel.opus).toBeCloseTo(3);
+    expect(l.windows.five_hour!.byModel.sonnet).toBeCloseTo(1);
+    expect(l.pendingW.five_hour).toBeUndefined();
+    expect(l.pendingW.seven_day).toEqual({ opus: 3, sonnet: 1 });
+  });
+
+  it("negative delta keeps pending", () => {
+    let l = applyReading(emptyLedger(), usage(20, 5), T0);
     l = addContribution(l, contrib("opus", 1, T0 + 1000));
-    l = applyReading(l, usage(12, 1), T0 + 31 * 60_000);
-    expect(l.windows.five_hour!.byModel.opus).toBeUndefined();
-    expect(l.windows.five_hour!.other).toBeCloseTo(12);
-    expect(l.pending).toEqual([]);
+    l = applyReading(l, usage(15, 4), T0 + 5000);
+    expect(l.pendingW.five_hour).toEqual({ opus: 1 });
+    expect(sum(l, "five_hour")).toBeCloseTo(15);
+  });
+
+  it("migrates an old stored `pending` array", () => {
+    const old = {
+      windows: {}, lastReadingAt: 5, hubPrev: {},
+      pending: [contrib("opus", 2, 1), contrib("opus", 3, 2), contrib("sonnet", 1, 3)],
+    };
+    const l = normalizeLedger(old);
+    expect(l.pendingW.five_hour).toEqual({ opus: 5, sonnet: 1 });
+    expect(l.pendingW.seven_day).toEqual({ opus: 5, sonnet: 1 });
+    expect((l as unknown as Record<string, unknown>).pending).toBeUndefined();
+    expect(normalizeLedger({ windows: {} }).pendingW).toEqual({});
+    expect(normalizeLedger(undefined)).toEqual(emptyLedger());
   });
 
   it("small resetsAt jitter is the same cycle; a real change starts a new one", () => {
@@ -124,13 +175,10 @@ describe("recordHubSnapshot", () => {
   it("first sight is baseline only, then positive deltas become weighted contributions", () => {
     let r = recordHubSnapshot(emptyLedger(), dev({ "claude-opus-4": 1000 }), T0);
     expect(r.added).toBe(0);
-    expect(r.ledger.pending).toEqual([]);
+    expect(r.ledger.pendingW).toEqual({});
     r = recordHubSnapshot(r.ledger, dev({ "claude-opus-4": 1400, "claude-haiku-4": 100 }), T0 + 30_000);
     expect(r.added).toBe(2);
-    expect(r.ledger.pending.map((c) => [c.model, c.weight, c.source])).toEqual([
-      ["claude-opus-4", 2000, "hub"],
-      ["claude-haiku-4", 30, "hub"],
-    ]);
+    expect(r.ledger.pendingW.five_hour).toEqual({ "claude-opus-4": 2000, "claude-haiku-4": 30 });
     const r2 = recordHubSnapshot(r.ledger, dev({ "claude-opus-4": 1300 }), T0 + 60_000);
     expect(r2.added).toBe(0);
   });

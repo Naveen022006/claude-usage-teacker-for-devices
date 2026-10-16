@@ -1,4 +1,4 @@
-import { emptyLedger } from "./shared/attribution";
+import { emptyLedger, normalizeLedger } from "./shared/attribution";
 import type { Ledger } from "./shared/attribution";
 import { DEFAULT_SETTINGS, DEFAULT_SW_DIAG, DEFAULT_SYNC_STATE, type DeviceInfo, type StorageShape } from "./shared/types";
 
@@ -58,7 +58,7 @@ let ledgerChain: Promise<unknown> = Promise.resolve();
 /** Serialises read-modify-write on `limitLedger`. */
 export function mutateLedger(fn: (l: Ledger) => Ledger): Promise<Ledger> {
   const run = ledgerChain.then(async () => {
-    const cur = { ...emptyLedger(), ...(await get("limitLedger")) };
+    const cur = normalizeLedger(await get("limitLedger"));
     const next = fn(cur);
     if (next !== cur) await set({ limitLedger: next });
     return next;

@@ -5,11 +5,19 @@
 - **Interval**: time between two consecutive polls in the same window (same reset time).
 - **Active device**: a device with evidence of activity inside an interval.
 
+## Relation to the existing engine (Phase 0 finding)
+`src/shared/attribution.ts` already does this split **per model**: it watches each window's % rise between
+readings and divides it over the replies seen since the previous reading, weighted by `replyWeight()` (estimated
+cost per reply, for this browser's events and for hub token deltas alike). The per-device engine reuses the same
+interval logic and weights, and changes only the key (device instead of model) plus adds the sessions-list signal.
+Both ledgers must keep the same invariant: sum of rows + Unattributed = observed utilisation for the window.
+
 ## Inputs per interval [t0, t1]
-1. `delta_pts` = reading(t1) - reading(t0), only when > 0 and both reads share the same reset time.
+1. `delta_pts` = reading(t1) - reading(t0), only when > 0 and both reads belong to the same cycle: reset times
+   equal within 2 minutes (`CYCLE_TOLERANCE_MS`; the API's `resets_at` jitters slightly between reads).
 2. Session activity: sessions whose `Updated` changed between the two polls.
-3. Events: browser send events in the interval (per install/device).
-4. Claude Code tokens in the interval (per device), if the collector is used.
+3. Events: this browser's reply events in the interval (from the existing fetch hook).
+4. Claude Code / Claude Desktop token deltas in the interval, per hub device (from the existing Usage Hub).
 
 ## Algorithm
 ```
@@ -26,11 +34,13 @@ for each interval with delta_pts > 0:
         confidence = high if from events/tokens, medium if only Updated
     else:
         weights:
-          use token shares where tokens exist (scaled by fitted tokens-per-pt, see below),
-          else event counts,
-          else equal split among A_updated
+          use replyWeight() sums for devices with events or hub tokens (same unit for both),
+          devices with only an Updated change get the mean weight of the others (or 1 if none have any),
         assign proportionally, confidence = low (method=split)
 ```
+Device identity: this browser = the Current row (once E1 confirms it is detectable). Hub devices are their own
+rows, because the Claude Code CLI may have no sessions-list row at all. When a hub device and a sessions-list row
+are the same machine (for example Claude Desktop on this PC), the user merges them in the alias/merge editor.
 Totals per window = sum of delta over intervals since the window's reset time. When a reset time changes,
 start fresh totals for that window and archive the old ones.
 
@@ -40,7 +50,7 @@ start fresh totals for that window and archive the old ones.
 - Heartbeat poll even when idle so gaps are visible and labeled "no data" instead of guessed.
 
 ## Optional calibration (tokens to points)
-Only needed to weight splits when Claude Code tokens exist on several devices:
+`replyWeight()` is a fixed estimate today. Calibration would replace it once there is enough data:
 - Use intervals where exactly one device was active to estimate pts per 1k tokens per model.
 - Use medians and drop outliers; keep `n_intervals` and a spread measure.
 - Under a minimum count (for example 10 intervals) mark every split "low confidence".

@@ -2,17 +2,26 @@
 
 > Verify field names against the real page/endpoint in Phase 0. Store only what is listed here.
 
-## Tables (IndexedDB stores or SQLite, same shape)
+## Where things live (Phase 0 finding)
+- Existing small state (settings, latest `accountUsage`, per-model ledger, captured reply events, device id)
+  stays in `chrome.storage.local` as today.
+- The new history tables below (`readings`, `sessions`, `session_updates`, `attribution`) go in **IndexedDB**:
+  `chrome.storage.local` is capped at 10 MB and a reading every minute for 90 days would not fit.
+- `install_id` = the existing random `device.deviceId` (UUID made on install, see `src/storage.ts`).
+
+## Tables (IndexedDB stores)
 
 ```sql
--- account usage readings (one per read)
+-- account usage readings: appended only when any window value or reset time changed,
+-- plus one heartbeat row per hour (so gaps are visible). Keeps 90 days.
 readings(
   ts TEXT NOT NULL,                  -- UTC ISO
   install_id TEXT,                   -- which extension install took it
   plan TEXT,
-  win5h_pct REAL, win5h_resets_at TEXT,
-  weekly_all_pct REAL, weekly_resets_at TEXT,
-  weekly_by_model TEXT,              -- JSON, e.g. {"sonnet": 22.0}
+  windows TEXT,                      -- JSON AccountWindow[] as parsed today, e.g.
+                                     -- [{"name":"five_hour","utilization":12,"resetsAt":"..."},
+                                     --  {"name":"seven_day","utilization":30,...},{"name":"seven_day_opus",...}]
+                                     -- names are open-ended (new models appear), so no fixed columns
   PRIMARY KEY (ts, install_id)
 );
 
@@ -29,7 +38,7 @@ sessions(
   location TEXT                      -- optional, OFF by default
 );
 
--- every poll of a session's Updated value (activity signal)
+-- every change of a session's Updated value (activity signal), plus an hourly heartbeat
 session_updates(
   session_key TEXT NOT NULL,
   polled_at TEXT NOT NULL,
@@ -37,25 +46,17 @@ session_updates(
   PRIMARY KEY (session_key, polled_at)
 );
 
--- optional browser-side events (metadata only)
-events(
-  ts TEXT NOT NULL,
-  install_id TEXT NOT NULL,
-  kind TEXT NOT NULL,                -- 'send' | 'response_done'
-  model TEXT,                        -- only if visible without reading content
-  PRIMARY KEY (ts, install_id, kind)
-);
+-- browser-side events: ALREADY EXISTS as `events` (UsageEvent[]) in chrome.storage.local.
+-- The MAIN-world fetch hook records one event per completed reply: time, model, estimated
+-- input/output tokens (from character counts; text is discarded). No new table needed.
 
--- optional Claude Code token evidence (from collector)
-cc_usage(
-  device_id TEXT NOT NULL, msg_key TEXT NOT NULL, ts TEXT NOT NULL, model TEXT NOT NULL,
-  input_tokens INT, output_tokens INT, cache_write_tokens INT, cache_read_tokens INT,
-  PRIMARY KEY (device_id, msg_key)
-);
+-- Claude Code / Claude Desktop token evidence: ALREADY EXISTS via the Usage Hub.
+-- The daemon (daemon/) reports per-device, per-model token totals; the extension turns hub
+-- snapshots into deltas (ledger.hubPrev in src/shared/attribution.ts). Replaces `cc_usage`.
 
 -- engine output
 attribution(
-  window_scope TEXT NOT NULL,        -- 'win5h' | 'weekly'
+  window_scope TEXT NOT NULL,        -- 'five_hour' | 'seven_day' (same names as the usage parser)
   interval_start TEXT NOT NULL,
   interval_end TEXT NOT NULL,
   device_id TEXT,                    -- NULL = unattributed
@@ -67,7 +68,11 @@ attribution(
 ```
 
 ## Never stored
-Cookies, auth headers, raw session ids, org/account ids, IPs, prompt/response content, tool output.
+Cookies, auth headers, raw session ids, IPs, prompt/response content, tool output.
+
+Exception: the claude.ai **org id** is kept in `chrome.storage.local` because the usage request path needs it
+(`/api/organizations/{orgId}/usage`). It is never exported, never synced to the hub, and never sent anywhere
+else in raw form. (Phase 1 fix: the push to the local tray app currently sends it raw; send a hash instead.)
 
 ## Export (`estimates.json`)
 ```json
@@ -75,10 +80,10 @@ Cookies, auth headers, raw session ids, org/account ids, IPs, prompt/response co
   "schema": 1,
   "generated_at": "2026-10-21T10:00:00Z",
   "windows": {
-    "win5h": { "resets_at": "...", "total_pts": 16.0,
+    "five_hour": { "resets_at": "...", "total_pts": 16.0,
       "by_device": [ { "device_id": "...", "label": "Chrome (Windows)", "pts": 9.0, "confidence": "high" } ],
       "unattributed_pts": 2.0 },
-    "weekly": { "...": "same shape" }
+    "seven_day": { "...": "same shape" }
   }
 }
 ```

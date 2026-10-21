@@ -3,6 +3,7 @@
 
 import { clampCharsPerToken, estimateTokens } from "./capture/tokens";
 import { addContribution, applyReading, attributionView, emptyLedger, normalizeLedger, recordHubSnapshot, replyWeight } from "./shared/attribution";
+import { routeMessage } from "./shared/route";
 import { addDeviceContribution, applyDeviceReading, deviceView, emptyDeviceLedger, LOCAL_KEY, normalizeDeviceLedger, recordHubDevices } from "./shared/deviceAttribution";
 import { computeAggregates, pruneEvents } from "./shared/aggregate";
 import {
@@ -164,26 +165,25 @@ async function readingNow(): Promise<void> {
 // ---- messages ----
 
 chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
-  if (sender.tab) {
-    if (sender.url?.startsWith("https://claude.ai/") && sender.id === chrome.runtime.id) {
-      // The widget (ISOLATED content script) is the only content script that gets a response.
-      const w = validateWidgetRequest(msg);
-      if (w) {
-        handleWidget(w.type, w.type === "get-widget-state" ? w.orgHint : undefined).then(sendResponse, (e) =>
-          sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }),
-        );
-        return true;
-      }
-      const m = validatePageMessage(msg);
-      if (m) void handlePage(m).catch((e) => console.warn("[claude-usage] page message failed", e));
-      else if ((msg as { type?: unknown } | null)?.type === "usage-event") {
-        const reason = explainCapturedEventError((msg as { payload?: unknown }).payload) ?? "invalid message";
-        void bumpSwDiag({ eventsReceived: 1, eventsRejected: 1 }, reason).catch(() => {});
-      }
+  const route = routeMessage(sender, chrome.runtime.id, chrome.runtime.getURL(""));
+  if (route === "ignore") return false;
+  if (route === "content") {
+    // The widget (ISOLATED content script) is the only content script that gets a response.
+    const w = validateWidgetRequest(msg);
+    if (w) {
+      handleWidget(w.type, w.type === "get-widget-state" ? w.orgHint : undefined).then(sendResponse, (e) =>
+        sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }),
+      );
+      return true;
+    }
+    const m = validatePageMessage(msg);
+    if (m) void handlePage(m).catch((e) => console.warn("[claude-usage] page message failed", e));
+    else if ((msg as { type?: unknown } | null)?.type === "usage-event") {
+      const reason = explainCapturedEventError((msg as { payload?: unknown }).payload) ?? "invalid message";
+      void bumpSwDiag({ eventsReceived: 1, eventsRejected: 1 }, reason).catch(() => {});
     }
     return false;
   }
-  if (sender.id !== chrome.runtime.id) return false;
   handleUi(msg as UiRequest).then(sendResponse, (e) =>
     sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }),
   );

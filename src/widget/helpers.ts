@@ -552,6 +552,8 @@ export interface DeviceRowView {
   badge: "High" | "Low" | null; // null for the Unattributed row
   title: string;
   unattributed: boolean;
+  /** muted explanation under the row (waiting for the % to move / nothing yet), else null */
+  note: string | null;
 }
 
 export interface DeviceSectionView {
@@ -559,6 +561,7 @@ export interface DeviceSectionView {
   heading: string; // "5-hour" | "Weekly"
   resetsAt: string | null;
   total: string; // "Total 15.0 pts"
+  since: string | null; // "Tracking since 10:42"
   rows: DeviceRowView[];
 }
 
@@ -570,7 +573,18 @@ const CONFIDENCE_TITLE = {
   High: "High: only this device was active when usage rose.",
   Low: "Low: several devices were active, so the rise was split by estimated cost.",
 } as const;
-const UNATTRIBUTED_TITLE = "Other devices without the extension (e.g. a phone), or usage from before tracking started.";
+const UNATTRIBUTED_TITLE = "Other devices without the extension (phone, Claude Desktop chats) and usage from before tracking started.";
+export const WAITING_NOTE = "Waiting for the usage % to move";
+export const NO_LOCAL_USAGE_NOTE = "No usage from this browser yet in this window";
+
+/** "Tracking since 10:42" (local time); with the date when it was not today. */
+export function formatTrackingSince(ts: number | undefined, now: number): string | null {
+  if (ts === undefined || !Number.isFinite(ts) || ts <= 0) return null;
+  const d = new Date(ts);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const sameDay = d.toDateString() === new Date(now).toDateString();
+  return `Tracking since ${sameDay ? time : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`}`;
+}
 
 const fmtPts = (x: number): string => `${(Number.isFinite(x) && x > 0 ? x : 0).toFixed(1)} pts`;
 const sharePct = (pts: number, total: number): number => (total > 0 ? clampPct((pts / total) * 100) : 0);
@@ -580,11 +594,11 @@ export function deviceRowsFor(view: DeviceWindowView): DeviceRowView[] {
   const rows: DeviceRowView[] = view.rows.map((r) => {
     const badge = r.confidence === "low" ? "Low" : "High";
     const share = sharePct(r.pts, view.totalPts);
-    return { key: r.key, label: r.label, pts: fmtPts(r.pts), share: `${Math.round(share)}%`, bar: share, badge, title: `${r.label} · ${fmtPts(r.pts)} · ${CONFIDENCE_TITLE[badge]}`, unattributed: false };
+    return { key: r.key, label: r.label, pts: fmtPts(r.pts), share: `${Math.round(share)}%`, bar: share, badge, title: `${r.label} · ${fmtPts(r.pts)} · ${CONFIDENCE_TITLE[badge]}`, unattributed: false, note: r.waiting ? WAITING_NOTE : r.key === "local" && !(r.pts >= DEVICES_UNATTRIBUTED_MIN) ? NO_LOCAL_USAGE_NOTE : null };
   });
   if (view.unattributedPts >= DEVICES_UNATTRIBUTED_MIN) {
     const share = sharePct(view.unattributedPts, view.totalPts);
-    rows.push({ key: "unattributed", label: "Unattributed", pts: fmtPts(view.unattributedPts), share: `${Math.round(share)}%`, bar: share, badge: null, title: UNATTRIBUTED_TITLE, unattributed: true });
+    rows.push({ key: "unattributed", label: "Unattributed", pts: fmtPts(view.unattributedPts), share: `${Math.round(share)}%`, bar: share, badge: null, title: UNATTRIBUTED_TITLE, unattributed: true, note: null });
   }
   return rows;
 }
@@ -594,13 +608,14 @@ export function devicesPanel(
   devices: DeviceView | undefined,
   acct: { windows: AccountWindow[] } | null | undefined,
   plan: string | null | undefined,
+  now: number = Date.now(),
 ): DevicesPanelView {
   const sections: DeviceSectionView[] = [];
   for (const [name, heading] of [["five_hour", "5-hour"], ["seven_day", "Weekly"]] as const) {
     const v = devices?.[name];
     if (!v) continue;
     const resetsAt = acct?.windows?.find((w) => w.name === name)?.resetsAt ?? (Number.isFinite(Date.parse(v.cycle)) ? v.cycle : null);
-    sections.push({ name, heading, resetsAt, total: `Total ${fmtPts(v.totalPts)}`, rows: deviceRowsFor(v) });
+    sections.push({ name, heading, resetsAt, total: `Total ${fmtPts(v.totalPts)}`, since: formatTrackingSince(v.trackingSince, now), rows: deviceRowsFor(v) });
   }
   if (sections.length) return { kind: "ok", sections };
   if (plan === "free" && !acct?.windows?.length) return { kind: "empty", message: "Per-device usage needs a Pro/Max plan usage reading." };

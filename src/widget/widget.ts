@@ -666,6 +666,7 @@ class Widget {
       out.push(h("div", { class: "sb-sub" }, h("span", {}, sec.heading), cd ? h("span", { class: "sb-right" }, "resets in ", cd) : null));
       for (const r of sec.rows) out.push(this.sbDeviceRow(r));
       out.push(h("div", { class: "sb-none" }, sec.total));
+      if (sec.since) out.push(h("div", { class: "sb-diag" }, sec.since));
     }
     out.push(h("div", { class: "sb-diag" }, DEVICES_FOOTER));
     return out;
@@ -676,7 +677,7 @@ class Widget {
     const row = h("div", { class: `sb-row dev${r.unattributed ? " other" : ""}`, "data-dev": r.key }, h("span", { class: "sb-pts" }, r.pts), h("span", { class: "sb-pts sh" }, r.share), badge);
     const label = h("div", { class: "sb-dev-lbl", title: r.label }, r.label);
     const bar = r.unattributed ? null : h("div", { class: "sb-bar", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(r.bar)), "aria-label": r.label }, h("div", { class: "sb-fill", style: `width:${r.bar}%` }));
-    return h("div", { class: `sb-item sb-dev${r.unattributed ? " other" : ""}`, title: r.title }, label, row, bar);
+    return h("div", { class: `sb-item sb-dev${r.unattributed ? " other" : ""}`, title: r.title }, label, row, bar, r.note ? h("div", { class: "sb-diag dev-note" }, r.note) : null);
   }
 
   /** Temporary capture diagnostics: counters, redacted path patterns and event-type names only. */
@@ -792,8 +793,10 @@ class Widget {
             bar,
           ),
         );
+        if (r.note) card.append(h("div", { class: "small muted dev-note" }, r.note));
       }
       card.append(h("div", { class: "totals" }, sec.total));
+      if (sec.since) card.append(h("div", { class: "small muted" }, sec.since));
       wrap.append(card);
     }
     wrap.append(h("p", { class: "small muted" }, DEVICES_FOOTER));

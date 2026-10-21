@@ -28,6 +28,8 @@ export interface DeviceLedger {
   hubPrev: Record<string, number>;
   /** device key -> last known display name (so a hub that is unreachable or forgot a device doesn't leave a raw key) */
   names: Record<string, string>;
+  /** time (ms) tracking began for the current cycle of each window (set on first sight / cycle change) */
+  since: Partial<Record<AttrWindow, number>>;
 }
 
 export interface DeviceRow {
@@ -36,6 +38,8 @@ export interface DeviceRow {
   pts: number;
   share: number;
   confidence: "high" | "low";
+  /** this device has replies whose weight is still waiting for the usage % to move */
+  waiting: boolean;
 }
 
 export interface DeviceWindowView {
@@ -45,6 +49,8 @@ export interface DeviceWindowView {
   unattributedPts: number;
   rows: DeviceRow[];
   baselineEstimated?: boolean;
+  /** ms epoch when tracking began for this cycle (undefined for ledgers stored before this field existed) */
+  trackingSince?: number;
 }
 
 export type DeviceView = Partial<Record<AttrWindow, DeviceWindowView>>;
@@ -57,7 +63,7 @@ export interface HubDeviceInput {
 }
 
 export function emptyDeviceLedger(): DeviceLedger {
-  return { ledger: emptyLedger(), splitPts: {}, cycle: {}, hubPrev: {}, names: {} };
+  return { ledger: emptyLedger(), splitPts: {}, cycle: {}, hubPrev: {}, names: {}, since: {} };
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -89,6 +95,10 @@ export function normalizeDeviceLedger(raw: unknown): DeviceLedger {
     if (isObj(raw.cycle)) for (const w of ATTR_WINDOWS) if (typeof raw.cycle[w] === "string") out.cycle[w] = raw.cycle[w] as string;
     out.hubPrev = numRecord(raw.hubPrev);
     out.names = nameRecord(raw.names);
+    if (isObj(raw.since)) for (const w of ATTR_WINDOWS) {
+      const t = raw.since[w];
+      if (typeof t === "number" && Number.isFinite(t) && t > 0) out.since[w] = t;
+    }
   } catch {
     return emptyDeviceLedger();
   }
@@ -114,6 +124,7 @@ export function applyDeviceReading(
   if (after === before) return dl;
   const splitPts: DeviceLedger["splitPts"] = { ...dl.splitPts };
   const cycle: DeviceLedger["cycle"] = { ...dl.cycle };
+  const since: DeviceLedger["since"] = { ...dl.since };
   for (const name of ATTR_WINDOWS) {
     const aw = after.windows[name];
     if (!aw) continue;
@@ -143,9 +154,10 @@ export function applyDeviceReading(
       if (!(cur[key] > 0)) delete cur[key];
     }
     splitPts[name] = cur;
+    if (!bw || bw.cycle !== aw.cycle || since[name] === undefined) since[name] = now;
     cycle[name] = aw.cycle;
   }
-  return { ...dl, ledger: after, splitPts, cycle };
+  return { ...dl, ledger: after, splitPts, cycle, since };
 }
 
 /**
@@ -193,19 +205,24 @@ export function deviceView(dl: DeviceLedger, labels: Record<string, string>): De
     if (!w) continue;
     const totalPts = sumOf(w);
     const split = dl.cycle[name] === w.cycle ? dl.splitPts[name] ?? {} : {};
+    const pending = dl.ledger.pendingW[name] ?? {};
     const rows: DeviceRow[] = [];
-    for (const [key, pts] of Object.entries(w.byModel)) {
-      if (!(pts >= MIN_ROW_PTS)) continue;
+    const keys = new Set<string>([LOCAL_KEY, ...Object.keys(w.byModel), ...Object.keys(pending)]);
+    for (const key of keys) {
+      const pts = w.byModel[key] ?? 0;
+      const waiting = (pending[key] ?? 0) > 0;
+      if (!(pts >= MIN_ROW_PTS) && !waiting && key !== LOCAL_KEY) continue;
       rows.push({
         key,
         label: labels[key] ?? dl.names[key] ?? (key.startsWith("hub:") ? "Other device" : key),
         pts,
         share: totalPts > 0 ? pts / totalPts : 0,
-        confidence: (split[key] ?? 0) / pts >= 0.5 ? "low" : "high",
+        confidence: pts > 0 && (split[key] ?? 0) / pts >= 0.5 ? "low" : "high",
+        waiting,
       });
     }
     rows.sort((a, b) => b.pts - a.pts);
-    out[name] = { cycle: w.cycle, totalPts, unattributedPts: w.other, rows, ...(w.baselineEstimated ? { baselineEstimated: true } : {}) };
+    out[name] = { cycle: w.cycle, totalPts, unattributedPts: w.other, rows, ...(w.baselineEstimated ? { baselineEstimated: true } : {}), ...(dl.since[name] !== undefined ? { trackingSince: dl.since[name] } : {}) };
   }
   return out;
 }

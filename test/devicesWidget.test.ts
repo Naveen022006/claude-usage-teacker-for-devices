@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { deviceRowsFor, devicesPanel, DEVICES_FOOTER, pickWindow } from "../src/widget/helpers";
+import { deviceRowsFor, devicesPanel, DEVICES_FOOTER, NO_LOCAL_USAGE_NOTE, pickWindow, WAITING_NOTE } from "../src/widget/helpers";
 import type { DeviceView, DeviceWindowView } from "../src/shared/deviceAttribution";
 
 const win = (over: Partial<DeviceWindowView> = {}): DeviceWindowView => ({
@@ -8,14 +8,14 @@ const win = (over: Partial<DeviceWindowView> = {}): DeviceWindowView => ({
   totalPts: 15,
   unattributedPts: 2,
   rows: [
-    { key: "local", label: "Chrome (this browser)", pts: 9, share: 0.6, confidence: "high" },
-    { key: "hub:d1", label: "Claude Desktop (Windows)", pts: 4, share: 4 / 15, confidence: "low" },
+    { key: "local", label: "Chrome (this browser)", pts: 9, share: 0.6, confidence: "high", waiting: false },
+    { key: "hub:d1", label: "Claude Desktop (Windows)", pts: 4, share: 4 / 15, confidence: "low", waiting: false },
   ],
   ...over,
 });
 const view = (): DeviceView => ({
   five_hour: win(),
-  seven_day: win({ totalPts: 6, unattributedPts: 0.01, rows: [{ key: "local", label: "Chrome (this browser)", pts: 6, share: 1, confidence: "high" }] }),
+  seven_day: win({ totalPts: 6, unattributedPts: 0.01, rows: [{ key: "local", label: "Chrome (this browser)", pts: 6, share: 1, confidence: "high", waiting: false }] }),
 });
 
 describe("deviceRowsFor", () => {
@@ -35,6 +35,28 @@ describe("deviceRowsFor", () => {
     expect(deviceRowsFor(win({ unattributedPts: 0.04 })).some((r) => r.unattributed)).toBe(false);
     expect(deviceRowsFor(win({ unattributedPts: 0.05 })).some((r) => r.unattributed)).toBe(true);
     expect(deviceRowsFor(win({ totalPts: 0, unattributedPts: 0, rows: [] }))).toEqual([]);
+  });
+});
+
+describe("notes and tracking-since", () => {
+  const zero = { key: "local", label: "Chrome (this browser)", pts: 0, share: 0, confidence: "high" as const, waiting: false };
+  it("waiting row and empty local row get notes", () => {
+    const rows = deviceRowsFor(win({ rows: [{ ...zero, waiting: true }, { ...zero, key: "hub:d1", label: "Desk", waiting: true }] }));
+    expect(rows.map((r) => r.note)).toEqual([WAITING_NOTE, WAITING_NOTE, null]);
+    const idle = deviceRowsFor(win({ rows: [zero] }));
+    expect(idle[0].note).toBe(NO_LOCAL_USAGE_NOTE);
+    expect(deviceRowsFor(win())[0].note).toBeNull();
+  });
+  it("section.since shows the time today, with a date otherwise", () => {
+    const now = new Date(2026, 0, 2, 12, 0).getTime();
+    const today = devicesPanel({ five_hour: win({ trackingSince: new Date(2026, 0, 2, 10, 42).getTime() }) }, null, "pro", now);
+    const old = devicesPanel({ five_hour: win({ trackingSince: new Date(2026, 0, 1, 10, 42).getTime() }) }, null, "pro", now);
+    const none = devicesPanel({ five_hour: win() }, null, "pro", now);
+    if (today.kind !== "ok" || old.kind !== "ok" || none.kind !== "ok") throw new Error("expected ok");
+    expect(today.sections[0].since).toMatch(/^Tracking since /);
+    expect(today.sections[0].since).not.toMatch(/Jan/);
+    expect(old.sections[0].since).toMatch(/^Tracking since .*(Jan|1)/);
+    expect(none.sections[0].since).toBeNull();
   });
 });
 
@@ -158,6 +180,17 @@ describe("Devices view in the widget", () => {
     expect(badges).toEqual(["High", "Low", "High"]);
     expect(q(".dev-badge.low")!.getAttribute("title")).toContain("several devices");
     expect(shadow!.querySelectorAll(".sb-row.dev")).toHaveLength(4); // 3 in 5-hour, 1 in weekly (unattributed hidden)
+  });
+
+  it("sidebar: waiting note and tracking-since line", async () => {
+    const v = view();
+    v.five_hour!.rows[1].waiting = true;
+    v.five_hour!.trackingSince = Date.now() - 60_000;
+    await boot(v, { sidebar: true });
+    q('[data-fk="sb-win-devices"]')!.click();
+    await flush();
+    expect(text()).toContain(WAITING_NOTE);
+    expect(text()).toContain("Tracking since");
   });
 
   it("sidebar: empty state when there are no device windows yet", async () => {

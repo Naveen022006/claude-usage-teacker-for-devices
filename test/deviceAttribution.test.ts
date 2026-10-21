@@ -56,7 +56,7 @@ describe("applyDeviceReading", () => {
     let dl = start(10, 1);
     dl = applyDeviceReading(dl, usage(14, 1), T0 + 60_000);
     const v = deviceView(dl, {}).five_hour!;
-    expect(v.rows).toEqual([]);
+    expect(v.rows.filter((r) => r.pts > 0)).toEqual([]); // only the always-present empty local row
     expect(v.unattributedPts).toBeCloseTo(14);
     expect(v.totalPts).toBeCloseTo(14);
   });
@@ -69,7 +69,7 @@ describe("applyDeviceReading", () => {
     expect(dl.splitPts.five_hour!.local).toBeGreaterThan(0);
     dl = applyDeviceReading(dl, usage(3, 10, "2026-01-01T19:00:00Z"), T0 + 5 * 3600_000);
     const v = deviceView(dl, {}).five_hour!;
-    expect(v.rows).toEqual([]);
+    expect(v.rows.filter((r) => r.pts > 0)).toEqual([]); // only the always-present empty local row
     expect(v.unattributedPts).toBeCloseTo(3);
     expect(dl.splitPts.five_hour).toEqual({});
     expect(dl.cycle.five_hour).toBe("2026-01-01T19:00:00Z");
@@ -153,7 +153,7 @@ describe("deviceView", () => {
     expect(v.cycle).toBe(R5);
   });
   it("share is 0 when the total is 0", () => {
-    expect(deviceView(start(0, 0), {}).five_hour).toMatchObject({ totalPts: 0, rows: [] });
+    expect(deviceView(start(0, 0), {}).five_hour).toMatchObject({ totalPts: 0, rows: [expect.objectContaining({ key: "local", pts: 0, share: 0 })] });
   });
 });
 
@@ -211,5 +211,37 @@ describe("device names", () => {
   it("normalize drops non-string and overlong names", () => {
     const dl = normalizeDeviceLedger({ names: { a: "ok", b: 5, c: "x".repeat(81), d: null } });
     expect(dl.names).toEqual({ a: "ok" });
+  });
+});
+
+describe("always-visible local row, waiting and since", () => {
+  it("local row exists with 0 pts in each window; hub rows with 0 pts do not", () => {
+    const v = deviceView(start(), {});
+    for (const w of ["five_hour", "seven_day"] as const) {
+      expect(v[w]!.rows.map((r) => [r.key, r.pts, r.waiting])).toEqual([["local", 0, false]]);
+    }
+  });
+  it("waiting is true while weight is pending (also for sub-threshold hub rows)", () => {
+    let dl = start();
+    dl = addDeviceContribution(dl, "local", 5, T0 + 1000);
+    dl = addDeviceContribution(dl, "hub:d1", 5, T0 + 1000);
+    const v = deviceView(dl, {}).five_hour!;
+    expect(v.rows.map((r) => [r.key, r.waiting]).sort()).toEqual([["hub:d1", true], ["local", true]]);
+    dl = applyDeviceReading(dl, usage(4, 1), T0 + 5000);
+    expect(deviceView(dl, {}).five_hour!.rows.every((r) => !r.waiting)).toBe(true);
+  });
+  it("since is set on first sight, kept across readings, reset on a new cycle", () => {
+    let dl = start();
+    expect(deviceView(dl, {}).five_hour!.trackingSince).toBe(T0);
+    dl = applyDeviceReading(dl, usage(3, 1), T0 + 5000);
+    expect(deviceView(dl, {}).five_hour!.trackingSince).toBe(T0);
+    const R5b = "2026-01-01T19:00:00Z";
+    dl = applyDeviceReading(dl, usage(1, 1, R5b), T0 + 9000);
+    expect(deviceView(dl, {}).five_hour!.trackingSince).toBe(T0 + 9000);
+    expect(deviceView(dl, {}).seven_day!.trackingSince).toBe(T0);
+  });
+  it("normalizeDeviceLedger tolerates missing/garbage since", () => {
+    expect(normalizeDeviceLedger({ since: { five_hour: "x", seven_day: 5 } }).since).toEqual({ seven_day: 5 });
+    expect(normalizeDeviceLedger({}).since).toEqual({});
   });
 });

@@ -114,3 +114,22 @@ describe("modelRowView", () => {
     expect(modelRowView(m, false).right).toBe("6.1k tok");
   });
 });
+
+describe("seven_day_breakdown", () => {
+  const base = { five_hour: { utilization: 2, resets_at: R } };
+  const bd = (rows: unknown[], extra: object = {}) => ({ ...base, seven_day_breakdown: { as_of: "2026-10-16T11:56:00Z", window_started_at: "2026-10-12T00:00:00Z", rows, ...extra } });
+  it("reads valid rows, trims names, clamps percent", () => {
+    const b = parseAccountUsage(bd([{ key: "lorem", display_name: "  Lorem ", percent: 12.5 }, { key: "ipsum", display_name: "Ipsum", percent: 250 }]), NOW)?.breakdown;
+    expect(b).toEqual({ asOf: "2026-10-16T11:56:00Z", windowStartedAt: "2026-10-12T00:00:00Z", rows: [{ key: "lorem", name: "Lorem", percent: 12.5 }, { key: "ipsum", name: "Ipsum", percent: 100 }] });
+  });
+  it("skips invalid rows, caps at 12, omits when none valid", () => {
+    const bad = [{ key: 1, display_name: "A", percent: 1 }, { key: "k", display_name: "  ", percent: 1 }, { key: "k", display_name: "A", percent: -1 }, { key: "k", display_name: "A", percent: NaN }, { key: "k", display_name: "x".repeat(41), percent: 1 }, null, "x"];
+    expect(parseAccountUsage(bd(bad), NOW)?.breakdown).toBeUndefined();
+    expect("breakdown" in parseAccountUsage(bd(bad), NOW)!).toBe(false);
+    const many = Array.from({ length: 20 }, (_, i) => ({ key: `k${i}`, display_name: `N${i}`, percent: i }));
+    expect(parseAccountUsage(bd(many), NOW)?.breakdown?.rows).toHaveLength(12);
+  });
+  it("never throws on junk", () => {
+    for (const j of [null, "x", 5, [], { ...base, seven_day_breakdown: 5 }, { ...base, seven_day_breakdown: { rows: "x" } }]) expect(() => parseAccountUsage(j, NOW)).not.toThrow();
+  });
+});

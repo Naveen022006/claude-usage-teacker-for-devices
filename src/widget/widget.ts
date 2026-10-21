@@ -26,6 +26,7 @@ import {
   mergeDevices,
   attributionRows,
   devicesPanel,
+  type BreakdownView,
   DEVICES_FOOTER,
   type DeviceRowView,
   modelRows,
@@ -667,8 +668,20 @@ class Widget {
       for (const r of sec.rows) out.push(this.sbDeviceRow(r));
       out.push(h("div", { class: "sb-none" }, sec.total));
       if (sec.since) out.push(h("div", { class: "sb-diag" }, sec.since));
+      if (sec.breakdown) out.push(...this.sbBreakdown(sec.breakdown));
     }
     out.push(h("div", { class: "sb-diag" }, DEVICES_FOOTER));
+    return out;
+  }
+
+  private sbBreakdown(b: BreakdownView): HTMLElement[] {
+    const out: HTMLElement[] = [h("div", { class: "sb-sub bd-head" }, h("span", {}, b.heading))];
+    for (const r of b.rows) {
+      out.push(h("div", { class: "sb-item bd-row", "data-bd": r.key },
+        h("div", { class: "sb-row" }, h("span", { class: "sb-lbl", title: r.name }, r.name), h("span", { class: "sb-right" }, r.value)),
+        h("div", { class: "sb-bar", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(r.bar)), "aria-label": r.name }, h("div", { class: "sb-fill neutral", style: `width:${r.bar}%` }))));
+    }
+    out.push(h("div", { class: "sb-diag" }, b.caption));
     return out;
   }
 
@@ -797,6 +810,13 @@ class Widget {
       }
       card.append(h("div", { class: "totals" }, sec.total));
       if (sec.since) card.append(h("div", { class: "small muted" }, sec.since));
+      if (sec.breakdown) {
+        card.append(h("div", { class: "card-title bd-head" }, sec.breakdown.heading));
+        for (const r of sec.breakdown.rows) {
+          card.append(h("div", { class: "mrow bd-row", "data-bd": r.key }, h("span", { class: "mname" }, r.name), h("span", { class: "mnum" }, r.value), h("div", { class: "mbar", "aria-hidden": "true" }, h("div", { class: "mfill", style: `width:${Math.max(2, r.bar)}%` }))));
+        }
+        card.append(h("div", { class: "small muted" }, sec.breakdown.caption));
+      }
       wrap.append(card);
     }
     wrap.append(h("p", { class: "small muted" }, DEVICES_FOOTER));

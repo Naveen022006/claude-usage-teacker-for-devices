@@ -1,7 +1,7 @@
 // WARNING: this endpoint is UNDOCUMENTED and may change or vanish at any time.
 // The response shape is unverified (and differs by plan), so parsing is defensive and fails soft (null).
 
-import type { AccountUsage, AccountWindow, UsageDiag } from "../shared/types";
+import type { AccountUsage, AccountWindow, UsageBreakdown, UsageDiag } from "../shared/types";
 import { toIso } from "../widget/helpers";
 
 const ORG_RE = /^[A-Za-z0-9-]{1,64}$/;
@@ -77,6 +77,29 @@ function collect(container: unknown, out: { name: string; raw: number; resetsAt?
   }
 }
 
+/** Read `seven_day_breakdown` defensively; undefined when there are no valid rows. Never throws. */
+export function parseBreakdown(v: unknown): UsageBreakdown | undefined {
+  try {
+    if (!isObj(v) || !Array.isArray(v.rows)) return undefined;
+    const rows: UsageBreakdown["rows"] = [];
+    for (const r of v.rows) {
+      if (rows.length >= 12) break;
+      if (!isObj(r) || typeof r.key !== "string" || r.key.length === 0 || r.key.length > 40) continue;
+      const name = typeof r.display_name === "string" ? r.display_name.trim() : "";
+      if (!name || name.length > 40) continue;
+      if (typeof r.percent !== "number" || !Number.isFinite(r.percent) || r.percent < 0) continue;
+      rows.push({ key: r.key, name, percent: Math.min(100, r.percent) });
+    }
+    if (!rows.length) return undefined;
+    const str = (x: unknown): string | undefined => (typeof x === "string" && x.length <= 64 ? x : undefined);
+    const asOf = str(v.as_of);
+    const windowStartedAt = str(v.window_started_at);
+    return { ...(asOf ? { asOf } : {}), ...(windowStartedAt ? { windowStartedAt } : {}), rows };
+  } catch {
+    return undefined;
+  }
+}
+
 /** Never throws. Accepts utilization as 0–100 or 0–1 (all values <= 1 with a fractional one => fractions). */
 export function parseAccountUsage(json: unknown, now = Date.now()): AccountUsage | null {
   try {
@@ -96,7 +119,8 @@ export function parseAccountUsage(json: unknown, now = Date.now()): AccountUsage
       if (f.resetsAt) w.resetsAt = f.resetsAt;
       windows.push(w);
     }
-    return { fetchedAt: now, windows };
+    const breakdown = isObj(json) ? parseBreakdown(json.seven_day_breakdown) : undefined;
+    return { fetchedAt: now, windows, ...(breakdown ? { breakdown } : {}) };
   } catch {
     return null;
   }

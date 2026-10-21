@@ -565,6 +565,20 @@ export interface DeviceSectionView {
   total: string; // "Total 15% used"
   since: string | null; // "Tracking since 10:42"
   rows: DeviceRowView[];
+  breakdown?: BreakdownView | null; // Weekly section only
+}
+
+export interface BreakdownRowView { key: string; name: string; value: string; bar: number }
+export interface BreakdownView { heading: string; rows: BreakdownRowView[]; caption: string }
+export const BREAKDOWN_HEADING = "Claude's weekly breakdown";
+
+/** Claude's official weekly breakdown (no confidence badge). null when absent. */
+export function breakdownView(b: { asOf?: string; rows: { key: string; name: string; percent: number }[] } | null | undefined): BreakdownView | null {
+  if (!b || !Array.isArray(b.rows) || !b.rows.length) return null;
+  const rows = b.rows.map((r) => ({ key: r.key, name: r.name, value: `${fmtNum(r.percent)}%`, bar: clampPct(r.percent) }));
+  const t = typeof b.asOf === "string" ? Date.parse(b.asOf) : NaN;
+  const time = Number.isFinite(t) ? new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : null;
+  return { heading: BREAKDOWN_HEADING, rows, caption: time ? `Reported by Claude · ${time}` : "Reported by Claude" };
 }
 
 export type DevicesPanelView = { kind: "empty"; message: string } | { kind: "ok"; sections: DeviceSectionView[] };
@@ -612,7 +626,7 @@ export function deviceRowsFor(view: DeviceWindowView): DeviceRowView[] {
 /** Everything the Devices tab renders (or the empty-state message). Never throws on partial data. */
 export function devicesPanel(
   devices: DeviceView | undefined,
-  acct: { windows: AccountWindow[] } | null | undefined,
+  acct: { windows: AccountWindow[]; breakdown?: { asOf?: string; rows: { key: string; name: string; percent: number }[] } } | null | undefined,
   plan: string | null | undefined,
   now: number = Date.now(),
 ): DevicesPanelView {
@@ -621,7 +635,7 @@ export function devicesPanel(
     const v = devices?.[name];
     if (!v) continue;
     const resetsAt = acct?.windows?.find((w) => w.name === name)?.resetsAt ?? (Number.isFinite(Date.parse(v.cycle)) ? v.cycle : null);
-    sections.push({ name, heading, resetsAt, total: `Total ${fmtNum(v.totalPts)}% used`, since: formatTrackingSince(v.trackingSince, now), rows: deviceRowsFor(v) });
+    sections.push({ name, heading, resetsAt, total: `Total ${fmtNum(v.totalPts)}% used`, since: formatTrackingSince(v.trackingSince, now), rows: deviceRowsFor(v), breakdown: name === "seven_day" ? breakdownView(acct?.breakdown) : null });
   }
   if (sections.length) return { kind: "ok", sections };
   if (plan === "free" && !acct?.windows?.length) return { kind: "empty", message: "Per-device usage needs a Pro/Max plan usage reading." };

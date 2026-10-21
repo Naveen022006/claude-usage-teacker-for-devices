@@ -79,7 +79,10 @@
         { name: "five_hour", utilization: 79, resetsAt: new Date(now + 295 * min + 20000).toISOString() },
         { name: "seven_day", utilization: 11, resetsAt: new Date(now + 3 * 86400000 + 20000).toISOString() } ].concat(q.get("extra") === "1" ? [
         { name: "seven_day_opus", utilization: 92, resetsAt: new Date(now + 2 * 86400000).toISOString() },
-        { name: "seven_day_sonnet", utilization: 83, resetsAt: new Date(now + 5 * 86400000).toISOString() } ] : []) },
+        { name: "seven_day_sonnet", utilization: 83, resetsAt: new Date(now + 5 * 86400000).toISOString() } ] : []),
+        breakdown: { asOf: new Date(now - 4 * min).toISOString(), rows: [
+          { key: "chat", name: "Chat", percent: 12 }, { key: "claude_code", name: "Claude Code", percent: 9 },
+          { key: "cowork", name: "Cowork", percent: 3 }, { key: "other", name: "Other", percent: 1 } ] } },
       attribution: { five_hour: { byModel: { "claude-opus-4-5": 52, "claude-sonnet-5-5": 19 }, other: 8 }, seven_day: { byModel: { "claude-opus-4-5": 7, "claude-sonnet-5-5": 3 }, other: 1 } },
       devices: { five_hour: { cycle: new Date(now + 295 * min).toISOString(), totalPts: 19, unattributedPts: 2, rows: [
           { key: "local", label: "Chrome (this browser)", pts: 9, share: 0.6, confidence: "high", waiting: false },

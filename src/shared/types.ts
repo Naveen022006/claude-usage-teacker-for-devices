@@ -51,9 +51,18 @@ export interface AccountWindow {
   resetsAt?: string; // ISO string
 }
 
+/** Claude's own breakdown of the weekly usage (`seven_day_breakdown`). Percent is shown as reported. */
+export interface UsageBreakdown {
+  asOf?: string;
+  windowStartedAt?: string;
+  rows: { key: string; name: string; percent: number }[];
+}
+
 export interface AccountUsage {
   fetchedAt: number;
   windows: AccountWindow[];
+  /** Local only: stripped before sending to the hub or the tray. */
+  breakdown?: UsageBreakdown;
 }
 
 /** Claude subscription plan, derived from /api/organizations capabilities. */

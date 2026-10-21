@@ -115,7 +115,7 @@ async function pushToTray(usage: WidgetState["accountUsage"]): Promise<void> {
     const res = await fetch(TRAY_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ v: 1, orgId: await orgHash(orgId), plan, usage }),
+      body: JSON.stringify({ v: 1, orgId: await orgHash(orgId), plan, usage: { fetchedAt: usage.fetchedAt, windows: usage.windows } }), // breakdown stays local
       signal: AbortSignal.timeout(3000),
     });
     note({ status: res.status });

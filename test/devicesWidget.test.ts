@@ -238,3 +238,23 @@ describe("estimated rows and % of limit formatting", () => {
     expect(DEVICES_FOOTER).toBe("Estimates from usage changes and device activity. Anthropic does not publish per-device usage.");
   });
 });
+
+describe("breakdownView", () => {
+  it("formats percent, bar and caption", async () => {
+    const { breakdownView } = await import("../src/widget/helpers");
+    const t = new Date(2026, 0, 2, 9, 5).toISOString();
+    const v = breakdownView({ asOf: t, rows: [{ key: "a", name: "Lorem", percent: 3.26 }, { key: "b", name: "Ipsum", percent: 12.4 }] })!;
+    expect(v.rows.map((r) => [r.name, r.value])).toEqual([["Lorem", "3.3%"], ["Ipsum", "12%"]]);
+    expect(v.rows[1].bar).toBeCloseTo(12.4);
+    expect(v.caption).toMatch(/^Reported by Claude · 09:05$/);
+    expect(breakdownView({ asOf: "nope", rows: [{ key: "a", name: "L", percent: 1 }] })!.caption).toBe("Reported by Claude");
+    expect(breakdownView(undefined)).toBeNull();
+  });
+  it("devicesPanel puts it on the Weekly section only", () => {
+    const acct = { windows: [], breakdown: { rows: [{ key: "a", name: "Lorem", percent: 5 }] } };
+    const p = devicesPanel(view(), acct, "pro", Date.now());
+    if (p.kind !== "ok") throw new Error("ok");
+    expect(p.sections.find((s) => s.name === "five_hour")!.breakdown).toBeNull();
+    expect(p.sections.find((s) => s.name === "seven_day")!.breakdown?.rows[0].value).toBe("5.0%");
+  });
+});

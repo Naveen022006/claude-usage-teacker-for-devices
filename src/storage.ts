@@ -14,6 +14,7 @@ const DEFAULTS: { [K in Defaulted]: StorageShape[K] } = {
   captureDiag: null,
   swDiag: DEFAULT_SW_DIAG,
   usageDiag: null,
+  trayDiag: null,
   limitLedger: emptyLedger(),
 };
 

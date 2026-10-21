@@ -135,6 +135,7 @@ export interface StorageShape {
   captureDiag: CaptureDiag | null;
   swDiag: SwDiag;
   usageDiag: UsageDiag | null;
+  trayDiag: TrayDiag | null;
   limitLedger: Ledger;
 }
 
@@ -182,6 +183,13 @@ export interface SwDiag {
 }
 
 export const DEFAULT_SW_DIAG: SwDiag = { eventsReceived: 0, eventsRejected: 0, lastRejectReason: null, eventsStored: 0 };
+
+/** Last hand-off of plan usage to the Usage Meter tray on this PC, stored as `trayDiag`. */
+export interface TrayDiag {
+  at: number;
+  status: number | null; // HTTP status from the tray, null = not sent or unreachable
+  note?: string; // why nothing was sent, or the network error
+}
 
 /** Shape (never values) of the last /usage response, stored as `usageDiag`. */
 export interface UsageDiag {

@@ -10,6 +10,7 @@ import type {
   AccountUsage,
   CaptureDiag,
   SwDiag,
+  TrayDiag,
   UsageDiag,
   Source,
   CapturedEvent,
@@ -112,8 +113,8 @@ export interface UiResponseData {
   "get-hub-devices": WidgetState["hub"];
   "test-connection": { reachable: boolean; detail: string };
   "sync-now": SyncState;
-  "get-diag": { page: CaptureDiag | null; sw: SwDiag; usage: UsageDiag | null };
-  "reset-diag": { page: CaptureDiag | null; sw: SwDiag; usage: UsageDiag | null };
+  "get-diag": { page: CaptureDiag | null; sw: SwDiag; usage: UsageDiag | null; tray: TrayDiag | null };
+  "reset-diag": { page: CaptureDiag | null; sw: SwDiag; usage: UsageDiag | null; tray: TrayDiag | null };
   "reset-attribution": null;
   "export-data": { json: string };
   "clear-data": UiState;

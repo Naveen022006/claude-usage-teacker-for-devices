@@ -173,7 +173,7 @@ $("clear").addEventListener("click", async () => {
 });
 
 // ---- diagnostics ----
-type DiagData = { page: import("../shared/types").CaptureDiag | null; sw: import("../shared/types").SwDiag; usage?: import("../shared/types").UsageDiag | null };
+type DiagData = { page: import("../shared/types").CaptureDiag | null; sw: import("../shared/types").SwDiag; usage?: import("../shared/types").UsageDiag | null; tray?: import("../shared/types").TrayDiag | null };
 let lastDiag: DiagData | null = null;
 
 function fillTable(t: HTMLElement, head: string[] | null, rows: string[][]): void {
@@ -189,7 +189,7 @@ function fillTable(t: HTMLElement, head: string[] | null, rows: string[][]): voi
 
 function renderDiag(d: DiagData): void {
   lastDiag = d;
-  renderUsageDiag(d.usage);
+  renderUsageDiag(d.usage, d.tray);
   const p = d.page;
   const yn = (b: boolean) => (b ? "yes" : "no");
   fillTable($("diagCounters"), null, [
@@ -218,13 +218,17 @@ function renderDiag(d: DiagData): void {
   );
 }
 
-function renderUsageDiag(u: import("../shared/types").UsageDiag | null | undefined): void {
+function renderUsageDiag(u: import("../shared/types").UsageDiag | null | undefined, tray: import("../shared/types").TrayDiag | null | undefined): void {
   const rows: string[][] = [];
   if (!u) rows.push(["Last /usage response", "none yet"]);
   else {
     rows.push(["Time", new Date(u.at).toLocaleTimeString()], ["HTTP", u.status === null ? "error" : String(u.status)], ["Parsed", u.parsed ? "yes" : "no"]);
     for (const [k, v] of Object.entries(u.shape)) rows.push([k, typeof v === "string" ? v : Object.entries(v).map(([a, b]) => `${a}: ${b}`).join(", ")]);
   }
+  rows.push([
+    "Sent to Usage Meter tray",
+    tray ? `${new Date(tray.at).toLocaleTimeString()} · ${tray.status === null ? "not sent" : `HTTP ${tray.status}`}${tray.note ? ` · ${tray.note}` : ""}` : "not yet",
+  ]);
   fillTable($("diagUsage"), null, rows);
 }
 

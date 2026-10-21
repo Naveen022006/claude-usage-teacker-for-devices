@@ -62,6 +62,7 @@ const LIMIT_DEFS: { name: string; label: string; always: boolean }[] = [
   { name: "seven_day", label: "Weekly", always: true },
   { name: "seven_day_opus", label: "Weekly Opus", always: false },
   { name: "seven_day_sonnet", label: "Weekly Sonnet", always: false },
+  { name: "seven_day_fable", label: "Weekly Fable", always: false },
 ];
 
 export function buildTrayState(i: TrayInput): TrayState {

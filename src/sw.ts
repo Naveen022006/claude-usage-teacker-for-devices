@@ -14,7 +14,7 @@ import {
   type UiState,
   type WidgetState,
 } from "./shared/messages";
-import { DEFAULT_SW_DIAG, DEFAULT_SYNC_STATE, type SwDiag, type UsageDiag, type Settings, type SyncState, type UsageEvent } from "./shared/types";
+import { DEFAULT_SW_DIAG, DEFAULT_SYNC_STATE, type SwDiag, type TrayDiag, type UsageDiag, type Settings, type SyncState, type UsageEvent } from "./shared/types";
 import { pickOrg, planOfOrgs } from "./shared/org";
 import { explainCapturedEventError, sanitizeDeviceIds, validatePageMessage, validateWidgetRequest } from "./shared/validate";
 import * as store from "./storage";
@@ -23,6 +23,7 @@ import { buildReport, fetchHubState, normalizeBase, ping, sendReport } from "./s
 
 const HEARTBEAT = "heartbeat";
 const SYNC_DEBOUNCE_MS = 3000;
+const USAGE_POLL_NO_TAB_MS = 3 * 60_000;
 const USAGE_POLL_MS = 55_000; // heartbeat is 1 min, so effectively every 1-2 min while a claude.ai tab is open
 const READING_DELAYS_MS = [4_000, 20_000]; // extra account-usage readings after each reply
 
@@ -47,6 +48,8 @@ async function heartbeat(): Promise<void> {
   } catch (e) {
     console.warn("[claude-usage] usage poll failed", e);
   }
+  // Keep the tray current even when no new reading was taken this minute (it marks stale data by age).
+  void store.get("accountUsage").then(pushToTray, () => {});
   await syncNow();
 }
 
@@ -60,19 +63,50 @@ async function pollAccountUsage(): Promise<void> {
     store.get("orgId"),
     store.get("accountUsage"),
   ]);
-  if (!settings.pollAccountUsage || !orgId) return;
+  if (!settings.pollAccountUsage) return;
   const now = Date.now();
-  if (now - Math.max(current?.fetchedAt ?? 0, lastUsageAttempt) < USAGE_POLL_MS) return;
+  // With a claude.ai tab open poll every ~1 min; otherwise every 3 min (the Usage Meter tray still needs it).
   const tabs = await chrome.tabs.query({ url: "https://claude.ai/*" });
-  if (!tabs.length) return;
+  const gap = tabs.length ? USAGE_POLL_MS : USAGE_POLL_NO_TAB_MS;
+  if (now - Math.max(current?.fetchedAt ?? 0, lastUsageAttempt) < gap) return;
+  let org = orgId;
+  if (!org) {
+    org = await discoverOrgId(undefined); // uses the claude.ai sign-in cookie; rate-limited
+    if (!org) return;
+    await store.set({ orgId: org });
+  }
   lastUsageAttempt = now;
-  const usage = await fetchAccountUsage(orgId, recordUsageDiag);
+  const usage = await fetchAccountUsage(org, recordUsageDiag);
   if (usage) await storeUsage(usage);
+}
+
+// ---- Usage Meter (Windows tray app on this PC) ----
+// The tray shows the plan limits of the Claude account used in Claude Desktop. Claude Desktop never exposes its
+// sign-in, so this extension (signed in to the same account on claude.ai) hands its readings to the tray over
+// localhost. Only plan %, reset times, plan name and the org id are sent — no tokens, cookies or message text.
+const TRAY_URL = "http://127.0.0.1:47823/api/local-account";
+async function pushToTray(usage: WidgetState["accountUsage"]): Promise<void> {
+  const note = (d: Omit<TrayDiag, "at">) => void store.set({ trayDiag: { at: Date.now(), ...d } }).catch(() => {});
+  if (!usage) return note({ status: null, note: "no plan usage read from claude.ai yet" });
+  try {
+    const [orgId, plan] = await Promise.all([store.get("orgId"), store.get("plan")]);
+    const res = await fetch(TRAY_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ v: 1, orgId, plan, usage }),
+      signal: AbortSignal.timeout(3000),
+    });
+    note({ status: res.status });
+  } catch (e) {
+    // Tray not running is fine; the note says so in Diagnostics.
+    note({ status: null, note: e instanceof Error ? `${e.name}: ${e.message}`.slice(0, 160) : "unreachable" });
+  }
 }
 
 /** Stores a fresh account-usage reading and feeds it to the per-model attribution ledger. */
 async function storeUsage(usage: NonNullable<WidgetState["accountUsage"]>): Promise<void> {
   await store.set({ accountUsage: usage });
+  void pushToTray(usage);
   try {
     await store.mutateLedger((l) => applyReading(l, usage, usage.fetchedAt));
   } catch (e) {
@@ -517,11 +551,11 @@ async function handleUi(req: UiRequest): Promise<UiResponse> {
         return ok<"sync-now">(await syncNow());
       }
       case "get-diag":
-        return ok<"get-diag">({ page: await store.get("captureDiag"), sw: await store.get("swDiag"), usage: await store.get("usageDiag") });
+        return ok<"get-diag">({ page: await store.get("captureDiag"), sw: await store.get("swDiag"), usage: await store.get("usageDiag"), tray: await store.get("trayDiag") });
       case "reset-diag":
         await swDiagChain;
-        await store.set({ captureDiag: null, swDiag: { ...DEFAULT_SW_DIAG }, usageDiag: null });
-        return ok<"reset-diag">({ page: null, sw: { ...DEFAULT_SW_DIAG }, usage: null });
+        await store.set({ captureDiag: null, swDiag: { ...DEFAULT_SW_DIAG }, usageDiag: null, trayDiag: null });
+        return ok<"reset-diag">({ page: null, sw: { ...DEFAULT_SW_DIAG }, usage: null, tray: null });
       case "reset-attribution":
         await store.mutateLedger(() => emptyLedger());
         void broadcastStateChanged();

@@ -16,15 +16,32 @@ const MAX_PIECE = 40;
 const MAX_LABEL = 80;
 const MAX_UA_KEYS = 30;
 
-const BROWSER_KEYS = [/^(browser|browser_name)$/i, /^(client)$/i, /^(app|app_name|application)$/i, /^(name|product)$/i];
-const OS_RE = /^(os|os_name|platform|operating_system|system)$/i;
+const BROWSER_KEYS = [/^browser_family$/i, /^(browser|browser_name)$/i, /^(client)$/i, /^(app|app_name|application)$/i, /^(name|product)$/i];
+const OS_KEYS = [/^os_family$/i, /^(os|os_name|platform|operating_system|system)$/i];
+const PLACEHOLDER = new Set(["other", "unknown", ""]);
+const WEB_SLUGS = new Set(["web", "claude-ai", "claude_ai", "webapp"]);
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
+function clean(s: string): string | null {
+  const t = s.trim();
+  return PLACEHOLDER.has(t.toLowerCase()) ? null : t;
+}
+
 function strOf(v: unknown): string | null {
-  if (typeof v === "string") return v.trim() || null;
-  if (isObj(v) && typeof v.name === "string") return v.name.trim() || null;
+  if (typeof v === "string") return clean(v);
+  if (isObj(v) && typeof v.name === "string") return clean(v.name);
   return null;
+}
+
+/** Native-app name from application_slug, or null for web / unknown slugs. */
+function nativeApp(slug: unknown): { name: string; ios: boolean; android: boolean } | null {
+  if (typeof slug !== "string") return null;
+  const s = slug.trim().toLowerCase().slice(0, MAX_PIECE);
+  if (!s || WEB_SLUGS.has(s)) return null;
+  if (!/(desktop|ios|android|mobile|app)/.test(s)) return null;
+  const name = s.includes("desktop") ? "Claude Desktop" : "Claude";
+  return { name, ios: /(^|[-_\s])ios($|[-_\s])/.test(s), android: s.includes("android") };
 }
 
 function pick(ua: Record<string, unknown>, res: RegExp[]): string | null {
@@ -51,9 +68,13 @@ function fromSlug(slug: unknown): string | null {
 
 function makeLabel(ua: unknown, slug: unknown): string {
   let label: string | null = null;
-  if (isObj(ua)) {
+  const app = nativeApp(slug);
+  const o = isObj(ua) ? pick(ua, OS_KEYS) : null;
+  if (app) {
+    const os = o ?? (app.ios ? "iOS" : app.android ? "Android" : null);
+    label = os ? `${app.name} (${os})` : app.name;
+  } else if (isObj(ua)) {
     const b = pick(ua, BROWSER_KEYS);
-    const o = pick(ua, [OS_RE]);
     if (b && o) label = `${b} (${o})`;
     else label = b ?? o;
   }

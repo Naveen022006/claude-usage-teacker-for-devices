@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addDeviceContribution, addSessionActivity, applyReadingWithSessions, applyDeviceReading, rememberNames, deviceView, emptyDeviceLedger, normalizeDeviceLedger, recordHubDevices,
+  addDeviceContribution, addSessionActivity, applyReadingWithSessions, applyDeviceReading, rememberNames, deviceView, emptyDeviceLedger, normalizeDeviceLedger, recordHubDevices, baselineWeights, DEVICE_LEDGER_VERSION,
   type DeviceLedger,
 } from "../src/shared/deviceAttribution";
 
@@ -209,7 +209,7 @@ describe("device names", () => {
     expect(deviceView(withHub(), {}).five_hour!.rows[0].label).toBe("Other device");
   });
   it("normalize drops non-string and overlong names", () => {
-    const dl = normalizeDeviceLedger({ names: { a: "ok", b: 5, c: "x".repeat(81), d: null } });
+    const dl = normalizeDeviceLedger({ version: 2, names: { a: "ok", b: 5, c: "x".repeat(81), d: null } });
     expect(dl.names).toEqual({ a: "ok" });
   });
 });
@@ -241,7 +241,7 @@ describe("always-visible local row, waiting and since", () => {
     expect(deviceView(dl, {}).seven_day!.trackingSince).toBe(T0);
   });
   it("normalizeDeviceLedger tolerates missing/garbage since", () => {
-    expect(normalizeDeviceLedger({ since: { five_hour: "x", seven_day: 5 } }).since).toEqual({ seven_day: 5 });
+    expect(normalizeDeviceLedger({ version: 2, since: { five_hour: "x", seven_day: 5 } }).since).toEqual({ seven_day: 5 });
     expect(normalizeDeviceLedger({}).since).toEqual({});
   });
 });
@@ -289,8 +289,8 @@ describe("addSessionActivity (sessions-list evidence)", () => {
   it("normalizeDeviceLedger keeps/validates method; rememberNames merges", () => {
     const dl = addSessionActivity(start(), ["session:a"], usage(1, 0), T0 + 2000);
     expect(normalizeDeviceLedger(JSON.parse(JSON.stringify(dl))).method).toEqual({ "session:a": "updated" });
-    expect(normalizeDeviceLedger({ method: { x: "updated", y: "bogus", z: 3 } }).method).toEqual({ x: "updated" });
-    expect(normalizeDeviceLedger({ method: "junk" }).method).toEqual({});
+    expect(normalizeDeviceLedger({ version: 2, method: { x: "updated", y: "bogus", z: 3 } }).method).toEqual({ x: "updated" });
+    expect(normalizeDeviceLedger({ version: 2, method: "junk" }).method).toEqual({});
     const named = rememberNames(dl, { "session:a": " Claude iOS ", "session:b": "" });
     expect(named.names).toEqual({ "session:a": "Claude iOS" });
     const after = applyDeviceReading(addSessionActivity(named, ["session:a"], usage(2, 0), T0 + 3000), usage(2, 0), T0 + 4000);
@@ -314,5 +314,95 @@ describe("applyReadingWithSessions", () => {
     const a = applyReadingWithSessions(dl, rd(8, 0, T0 + 5000), [], {}, T0 + 5000);
     const b = applyDeviceReading(dl, rd(8, 0, T0 + 5000), T0 + 5000);
     expect(a.ledger).toEqual(b.ledger);
+  });
+});
+
+describe("baselineWeights", () => {
+  const S = T0 - 5 * 3600_000;
+  const ev = (ts: number, over: Record<string, unknown> = {}) => ({
+    id: String(ts), ts, source: "chrome", deviceId: "me", model: "claude-sonnet-5-5", promptChars: 0, outputChars: 0, thinkingChars: 0,
+    promptTokens: 100, outputTokens: 20, estimated: true, status: "ok", kind: "chat", ...over,
+  }) as never;
+  const base = { events: [], ownDeviceId: "me", hubDevices: [], sessions: {}, window: "five_hour" as const, cycleStartMs: S, now: T0 };
+  it("sums local events inside the window and ignores outside / foreign ones", () => {
+    const w = baselineWeights({ ...base, events: [ev(S + 1000), ev(S - 1000), ev(T0 + 5000), ev(S + 2000, { deviceId: "other" }), ev(S + 3000, { source: "claude-code" })] });
+    expect(w).toEqual({ local: 200 });
+  });
+  it("hub tokens by window, self excluded", () => {
+    const hubDevices: { deviceId: string; source: string; last5hByModel: Record<string, number>; last7dByModel: Record<string, number> }[] = [
+      { deviceId: "cc", source: "claude-code", last5hByModel: { "claude-opus-4-5": 10 }, last7dByModel: { "claude-opus-4-5": 100 } },
+      { deviceId: "me", source: "chrome", last5hByModel: { x: 999 }, last7dByModel: { x: 999 } },
+    ];
+    expect(baselineWeights({ ...base, hubDevices })).toEqual({ "hub:cc": 50 });
+    expect(baselineWeights({ ...base, hubDevices, window: "seven_day" })).toEqual({ "hub:cc": 500 });
+  });
+  it("non-current sessions inside the window get the mean weight; outside ones do not", () => {
+    const sessions = {
+      "session:a": { lastUpdated: new Date(S + 10).toISOString(), current: false },
+      "session:old": { lastUpdated: new Date(S - 10).toISOString(), current: false },
+    };
+    expect(baselineWeights({ ...base, events: [ev(S + 1)], sessions })).toEqual({ local: 200, "session:a": 200 });
+    expect(baselineWeights({ ...base, sessions })).toEqual({ "session:a": 1 });
+  });
+  it("current session gives local the fallback weight when it has no events", () => {
+    const sessions = {
+      "session:cur": { lastUpdated: new Date(S + 10).toISOString(), current: true },
+      "session:b": { lastUpdated: new Date(S + 10).toISOString(), current: false },
+    };
+    const hubDevices = [{ deviceId: "cc", source: "claude-code", last5hByModel: { s: 40 }, last7dByModel: {} }];
+    expect(baselineWeights({ ...base, sessions, hubDevices })).toEqual({ "hub:cc": 40, local: 40, "session:b": 40 });
+  });
+  it("all-zero stays empty", () => {
+    expect(baselineWeights(base)).toEqual({});
+    expect(baselineWeights({ ...base, sessions: { "session:old": { lastUpdated: new Date(S - 1).toISOString(), current: true } } })).toEqual({});
+  });
+});
+
+describe("pre-tracking baseline", () => {
+  const W = { local: 3, "hub:cc": 1 };
+  it("first sight splits the utilisation, marks rows estimated/low", () => {
+    const dl = applyDeviceReading(emptyDeviceLedger(), usage(40, 20), T0, () => W);
+    const v = deviceView(dl, {}).five_hour!;
+    expect(v.unattributedPts).toBeCloseTo(0);
+    const local = v.rows.find((r) => r.key === "local")!;
+    expect(local.pts).toBeCloseTo(30);
+    expect(local.estimated).toBe(true);
+    expect(local.confidence).toBe("low");
+    expect(v.rows.find((r) => r.key === "hub:cc")!.pts).toBeCloseTo(10);
+    expect(v.baselineEstimated).toBe(true);
+  });
+  it("later tracked rises make the row mostly measured again", () => {
+    let dl = applyDeviceReading(emptyDeviceLedger(), usage(10, 5), T0, () => ({ local: 1 }));
+    dl = addDeviceContribution(dl, "local", 10, T0 + 1000);
+    dl = applyDeviceReading(dl, usage(40, 5), T0 + 5000);
+    const r = rowOf(dl, "local")!;
+    expect(r.pts).toBeCloseTo(40);
+    expect(r.estimated).toBeUndefined();
+    expect(r.confidence).toBe("high");
+  });
+  it("without a baseline (or with all-zero weights) usage stays Unattributed", () => {
+    for (const b of [undefined, () => ({})]) {
+      const v = deviceView(applyDeviceReading(emptyDeviceLedger(), usage(40, 20), T0, b), {}).five_hour!;
+      expect(v.unattributedPts).toBeCloseTo(40);
+      expect(v.rows.every((r) => !r.estimated)).toBe(true);
+    }
+  });
+  it("baselinePts shrink with a utilisation drop and reset with the cycle", () => {
+    let dl = applyDeviceReading(emptyDeviceLedger(), usage(40, 20), T0, () => ({ local: 1 }));
+    dl = applyDeviceReading(dl, usage(20, 20), T0 + 1000);
+    expect(dl.baselinePts.five_hour!.local).toBeCloseTo(20);
+    dl = applyDeviceReading(dl, usage(5, 20, "2026-01-01T19:00:00Z"), T0 + 2000);
+    expect(dl.baselinePts.five_hour).toEqual({});
+  });
+  it("survives a JSON round trip", () => {
+    const dl = applyDeviceReading(emptyDeviceLedger(), usage(40, 20), T0, () => W);
+    expect(normalizeDeviceLedger(JSON.parse(JSON.stringify(dl)))).toEqual(dl);
+  });
+  it("old (unversioned) ledgers load empty but keep names", () => {
+    const old = { ...applyDeviceReading(emptyDeviceLedger(), usage(40, 20), T0), names: { "hub:x": "Desk" } } as Record<string, unknown>;
+    delete old.version;
+    const n = normalizeDeviceLedger(JSON.parse(JSON.stringify(old)));
+    expect(n).toEqual({ ...emptyDeviceLedger(), names: { "hub:x": "Desk" } });
+    expect(n.version).toBe(DEVICE_LEDGER_VERSION);
   });
 });

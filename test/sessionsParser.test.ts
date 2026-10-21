@@ -10,12 +10,12 @@ describe("parseSessions", () => {
 
   it("exports the path", () => expect(SESSIONS_PATH).toBe("/api/auth/sessions/list-active"));
   it("labels and skips malformed entries", () => {
-    expect(r.sessions.map((s) => s.label)).toEqual(["Chrome (Windows)", "Claude Desktop", "Claude (iOS)", "Edge (Mac OS X)"]);
+    expect(r.sessions.map((s) => s.label)).toEqual(["Chrome (Windows)", "Claude Desktop (Windows)", "Claude (iOS)", "Edge (Windows)", "Chrome (Mac OS X)", "Browser"]);
   });
-  it("flags current", () => expect(r.sessions.map((s) => s.isCurrent)).toEqual([true, false, false, false]));
+  it("flags current", () => expect(r.sessions.map((s) => s.isCurrent)).toEqual([true, false, false, false, false, false]));
   it("reports hasMore and uaKeys", () => {
     expect(r.hasMore).toBe(true);
-    expect(r.uaKeys).toEqual(["another_key", "browser", "os", "zz_weird"]);
+    expect(r.uaKeys).toEqual(["browser_family", "browser_version", "device_family", "is_bot", "os_family", "os_version", "zz_weird"]);
   });
   it("leaks no uuid, location or expiry", () => {
     const out = JSON.stringify(r);

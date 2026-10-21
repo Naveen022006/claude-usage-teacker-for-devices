@@ -81,10 +81,11 @@
         { name: "seven_day_opus", utilization: 92, resetsAt: new Date(now + 2 * 86400000).toISOString() },
         { name: "seven_day_sonnet", utilization: 83, resetsAt: new Date(now + 5 * 86400000).toISOString() } ] : []) },
       attribution: { five_hour: { byModel: { "claude-opus-4-5": 52, "claude-sonnet-5-5": 19 }, other: 8 }, seven_day: { byModel: { "claude-opus-4-5": 7, "claude-sonnet-5-5": 3 }, other: 1 } },
-      devices: { five_hour: { cycle: new Date(now + 295 * min).toISOString(), totalPts: 15, unattributedPts: 2, rows: [
+      devices: { five_hour: { cycle: new Date(now + 295 * min).toISOString(), totalPts: 19, unattributedPts: 2, rows: [
           { key: "local", label: "Chrome (this browser)", pts: 9, share: 0.6, confidence: "high", waiting: false },
           { key: "hub:dk", label: "Claude Desktop (Windows)", pts: 4, share: 4 / 15, confidence: "low", waiting: true },
-          { key: "session:ios", label: "Claude (iOS)", pts: 1, share: 1 / 15, confidence: "medium", waiting: false } ], trackingSince: now - 95 * min },
+          { key: "session:ios", label: "Claude (iOS)", pts: 1, share: 1 / 15, confidence: "medium", waiting: false },
+          { key: "session:ipad", label: "Claude (iPad)", pts: 3, share: 3 / 18, confidence: "low", waiting: false, estimated: true } ], trackingSince: now - 95 * min },
         seven_day: { cycle: new Date(now + 3 * 86400000).toISOString(), totalPts: 11, unattributedPts: 1.5, rows: [
           { key: "local", label: "Chrome (this browser)", pts: 6, share: 6 / 11, confidence: "high", waiting: false },
           { key: "hub:dk", label: "Claude Desktop (Windows)", pts: 3.5, share: 3.5 / 11, confidence: "low", waiting: false },

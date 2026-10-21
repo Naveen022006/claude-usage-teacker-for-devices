@@ -2,9 +2,9 @@
 // the SW may be killed at any time, which is fine because every report is a full snapshot.
 
 import { clampCharsPerToken, estimateTokens } from "./capture/tokens";
-import { addContribution, applyReading, attributionView, emptyLedger, normalizeLedger, recordHubSnapshot, replyWeight } from "./shared/attribution";
+import { type AttrWindow, addContribution, applyReading, attributionView, emptyLedger, normalizeLedger, recordHubSnapshot, replyWeight } from "./shared/attribution";
 import { routeMessage } from "./shared/route";
-import { addDeviceContribution, applyReadingWithSessions, deviceView, emptyDeviceLedger, LOCAL_KEY, normalizeDeviceLedger, recordHubDevices } from "./shared/deviceAttribution";
+import { addDeviceContribution, applyReadingWithSessions, baselineWeights, deviceView, emptyDeviceLedger, LOCAL_KEY, normalizeDeviceLedger, recordHubDevices } from "./shared/deviceAttribution";
 import { computeAggregates, pruneEvents } from "./shared/aggregate";
 import {
   NS,
@@ -174,7 +174,18 @@ async function storeUsage(usage: NonNullable<WidgetState["accountUsage"]>): Prom
   try {
     const now = Date.now();
     const { changed, names } = await readSessionsEvidence(now);
-    await store.mutateDeviceLedger((dl) => applyReadingWithSessions(dl, usage, changed, names, now));
+    const [events, sessions, device] = await Promise.all([store.get("events"), store.get("sessions"), store.ensureDevice()]);
+    const hubDevices = hubCache?.result.ok
+      ? hubCache.result.devices.map((d) => ({
+          deviceId: d.deviceId,
+          source: d.source,
+          last5hByModel: Object.fromEntries(Object.entries(d.windows.last5h.byModel).map(([m, v]) => [m, v.tokens])),
+          last7dByModel: Object.fromEntries(Object.entries(d.windows.last7d.byModel).map(([m, v]) => [m, v.tokens])),
+        }))
+      : [];
+    const baseline = (window: AttrWindow, cycleStartMs: number) =>
+      baselineWeights({ events, ownDeviceId: device.deviceId, hubDevices, sessions, window, cycleStartMs, now });
+    await store.mutateDeviceLedger((dl) => applyReadingWithSessions(dl, usage, changed, names, now, baseline));
   } catch (e) {
     console.warn("[claude-usage] device attribution failed", e);
   }

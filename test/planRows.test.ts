@@ -67,6 +67,9 @@ describe("parseAccountUsage variants", () => {
     const s = describeShape({ five_hour: { utilization: 3, resets_at: "secret" }, x: null, rate_limits: [{ window: "5h" }] });
     expect(s).toEqual({ five_hour: { utilization: "number", resets_at: "string" }, x: "null", rate_limits: { "(array)": "array(1)", window: "string" } });
     expect(JSON.stringify(s)).not.toContain("secret");
+    const n = describeShape({ seven_day_breakdown: { rows: [{ model: "secretmodel", pct: 3 }, { model: "b" }], total: 1 } });
+    expect(n).toEqual({ seven_day_breakdown: { rows: "array(2)", "rows[0].model": "string", "rows[0].pct": "number", total: "number" } });
+    expect(JSON.stringify(n)).not.toContain("secretmodel");
   });
 });
 

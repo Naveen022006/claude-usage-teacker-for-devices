@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { deviceRowsFor, devicesPanel, DEVICES_FOOTER, NO_LOCAL_USAGE_NOTE, pickWindow, WAITING_NOTE } from "../src/widget/helpers";
+import { deviceRowsFor, devicesPanel, DEVICES_FOOTER, ESTIMATED_NOTE, NO_LOCAL_USAGE_NOTE, pickWindow, WAITING_NOTE } from "../src/widget/helpers";
 import type { DeviceView, DeviceWindowView } from "../src/shared/deviceAttribution";
 
 const win = (over: Partial<DeviceWindowView> = {}): DeviceWindowView => ({
@@ -22,9 +22,9 @@ describe("deviceRowsFor", () => {
   it("rows with pts, share %, badge, then an Unattributed row", () => {
     const rows = deviceRowsFor(win());
     expect(rows.map((r) => [r.label, r.pts, r.share, r.badge])).toEqual([
-      ["Chrome (this browser)", "9.0 pts", "60%", "High"],
-      ["Claude Desktop (Windows)", "4.0 pts", "27%", "Low"],
-      ["Unattributed", "2.0 pts", "13%", null],
+      ["Chrome (this browser)", "9.0% of limit", "60% of used", "High"],
+      ["Claude Desktop (Windows)", "4.0% of limit", "27% of used", "Low"],
+      ["Unattributed", "2.0% of limit", "13% of used", null],
     ]);
     expect(rows[0].bar).toBeCloseTo(60);
     expect(rows[1].title).toContain("several devices");
@@ -67,8 +67,8 @@ describe("devicesPanel", () => {
     expect(p.kind).toBe("ok");
     if (p.kind !== "ok") return;
     expect(p.sections.map((s) => [s.name, s.heading, s.total])).toEqual([
-      ["five_hour", "5-hour", "Total 15.0 pts"],
-      ["seven_day", "Weekly", "Total 6.0 pts"],
+      ["five_hour", "5-hour", "Total 15% used"],
+      ["seven_day", "Weekly", "Total 6.0% used"],
     ]);
     expect(p.sections[0].resetsAt).toBe("2026-01-01T15:00:00Z");
     expect(p.sections[1].resetsAt).toBe("2026-01-01T14:00:00Z"); // falls back to the cycle
@@ -172,9 +172,9 @@ describe("Devices view in the widget", () => {
     expect(t).toContain("Weekly");
     expect(t).toContain("Chrome (this browser)");
     expect(t).toContain("Claude Desktop (Windows)");
-    expect(t).toContain("9.0 pts");
+    expect(t).toContain("9.0% of limit");
     expect(t).toContain("Unattributed");
-    expect(t).toContain("Total 15.0 pts");
+    expect(t).toContain("Total 15% used");
     expect(t).toContain(DEVICES_FOOTER);
     const badges = Array.from(shadow!.querySelectorAll(".dev-badge")).map((b) => b.textContent);
     expect(badges).toEqual(["High", "Low", "High"]);
@@ -209,12 +209,32 @@ describe("Devices view in the widget", () => {
     await flush();
     const t = text();
     expect(t).toContain("Chrome (this browser)");
-    expect(t).toContain("9.0 pts · 60%");
+    expect(t).toContain("9.0% of limit · 60% of used");
     expect(t).toContain("Unattributed");
     expect(t).toContain(DEVICES_FOOTER);
     expect(shadow!.querySelectorAll(".dev-badge").length).toBe(3);
     q("#tab-session")!.click(); // the other tabs still render model cards
     await flush();
     expect(shadow!.querySelectorAll(".card-head").length).toBeGreaterThan(0);
+  });
+});
+
+describe("estimated rows and % of limit formatting", () => {
+  it("estimated row gets the Low badge, the note and an explanatory title", () => {
+    const rows = deviceRowsFor(win({ rows: [{ key: "local", label: "Chrome", pts: 12.4, share: 1, confidence: "low", waiting: false, estimated: true }], totalPts: 12.4, unattributedPts: 0 }));
+    expect(rows[0].pts).toBe("12% of limit");
+    expect(rows[0].share).toBe("100% of used");
+    expect(rows[0].badge).toBe("Low");
+    expect(rows[0].estimated).toBe(true);
+    expect(rows[0].note).toBe(ESTIMATED_NOTE);
+    expect(rows[0].title).toContain("before tracking started");
+  });
+  it("one decimal below 10, integer from 10; total and footer wording", () => {
+    const rows = deviceRowsFor(win({ rows: [{ key: "local", label: "A", pts: 9.96, share: 0.5, confidence: "high", waiting: false }], totalPts: 20, unattributedPts: 0 }));
+    expect(rows[0].pts).toBe("10% of limit");
+    const p = devicesPanel({ five_hour: win({ totalPts: 13 }) }, null, "pro");
+    if (p.kind !== "ok") throw new Error("expected ok");
+    expect(p.sections[0].total).toBe("Total 13% used");
+    expect(DEVICES_FOOTER).toBe("Estimates from usage changes and device activity. Anthropic does not publish per-device usage.");
   });
 });

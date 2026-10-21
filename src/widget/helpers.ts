@@ -546,12 +546,14 @@ export function attributionRows(
 export interface DeviceRowView {
   key: string;
   label: string;
-  pts: string; // "9.0 pts"
-  share: string; // "56%"
+  pts: string; // "9.0% of limit"
+  share: string; // "56% of used"
   bar: number; // 0-100
   badge: "High" | "Medium" | "Low" | null; // null for the Unattributed row
   title: string;
   unattributed: boolean;
+  /** mostly an estimate of activity before tracking started */
+  estimated: boolean;
   /** muted explanation under the row (waiting for the % to move / nothing yet), else null */
   note: string | null;
 }
@@ -560,7 +562,7 @@ export interface DeviceSectionView {
   name: "five_hour" | "seven_day";
   heading: string; // "5-hour" | "Weekly"
   resetsAt: string | null;
-  total: string; // "Total 15.0 pts"
+  total: string; // "Total 15% used"
   since: string | null; // "Tracking since 10:42"
   rows: DeviceRowView[];
 }
@@ -568,7 +570,8 @@ export interface DeviceSectionView {
 export type DevicesPanelView = { kind: "empty"; message: string } | { kind: "ok"; sections: DeviceSectionView[] };
 
 export const DEVICES_UNATTRIBUTED_MIN = 0.05;
-export const DEVICES_FOOTER = "Estimates. Anthropic does not publish per-device usage.";
+export const DEVICES_FOOTER = "Estimates from usage changes and device activity. Anthropic does not publish per-device usage.";
+export const ESTIMATED_NOTE = "Estimated from activity before tracking started";
 const CONFIDENCE_TITLE = {
   High: "High: only this device was active when usage rose.",
   Medium: "Medium: only a sessions-list change (no direct count) showed this device was active.",
@@ -587,7 +590,9 @@ export function formatTrackingSince(ts: number | undefined, now: number): string
   return `Tracking since ${sameDay ? time : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`}`;
 }
 
-const fmtPts = (x: number): string => `${(Number.isFinite(x) && x > 0 ? x : 0).toFixed(1)} pts`;
+const fmtNum = (x: number): string => { const v = Number.isFinite(x) && x > 0 ? x : 0; const r = Math.round(v * 10) / 10; return r < 10 ? r.toFixed(1) : String(Math.round(r)); };
+const fmtPts = (x: number): string => `${fmtNum(x)}% of limit`;
+const fmtShare = (pct: number): string => `${Math.round(pct)}% of used`;
 const sharePct = (pts: number, total: number): number => (total > 0 ? clampPct((pts / total) * 100) : 0);
 
 /** Display rows for one window: one per device (already sorted by the engine), then "Unattributed" when >= 0.05 pts. */
@@ -595,11 +600,11 @@ export function deviceRowsFor(view: DeviceWindowView): DeviceRowView[] {
   const rows: DeviceRowView[] = view.rows.map((r) => {
     const badge = r.confidence === "low" ? "Low" : r.confidence === "medium" ? "Medium" : "High";
     const share = sharePct(r.pts, view.totalPts);
-    return { key: r.key, label: r.label, pts: fmtPts(r.pts), share: `${Math.round(share)}%`, bar: share, badge, title: `${r.label} · ${fmtPts(r.pts)} · ${CONFIDENCE_TITLE[badge]}`, unattributed: false, note: r.waiting ? WAITING_NOTE : r.key === "local" && !(r.pts >= DEVICES_UNATTRIBUTED_MIN) ? NO_LOCAL_USAGE_NOTE : null };
+    return { key: r.key, label: r.label, pts: fmtPts(r.pts), share: fmtShare(share), bar: share, badge, title: `${r.label} · ${fmtPts(r.pts)} · ${r.estimated ? "Low: " + ESTIMATED_NOTE + ", split by recent activity." : CONFIDENCE_TITLE[badge]}`, unattributed: false, estimated: !!r.estimated, note: r.waiting ? WAITING_NOTE : r.estimated ? ESTIMATED_NOTE : r.key === "local" && !(r.pts >= DEVICES_UNATTRIBUTED_MIN) ? NO_LOCAL_USAGE_NOTE : null };
   });
   if (view.unattributedPts >= DEVICES_UNATTRIBUTED_MIN) {
     const share = sharePct(view.unattributedPts, view.totalPts);
-    rows.push({ key: "unattributed", label: "Unattributed", pts: fmtPts(view.unattributedPts), share: `${Math.round(share)}%`, bar: share, badge: null, title: UNATTRIBUTED_TITLE, unattributed: true, note: null });
+    rows.push({ key: "unattributed", label: "Unattributed", pts: fmtPts(view.unattributedPts), share: fmtShare(share), bar: share, badge: null, title: UNATTRIBUTED_TITLE, unattributed: true, estimated: false, note: null });
   }
   return rows;
 }
@@ -616,7 +621,7 @@ export function devicesPanel(
     const v = devices?.[name];
     if (!v) continue;
     const resetsAt = acct?.windows?.find((w) => w.name === name)?.resetsAt ?? (Number.isFinite(Date.parse(v.cycle)) ? v.cycle : null);
-    sections.push({ name, heading, resetsAt, total: `Total ${fmtPts(v.totalPts)}`, since: formatTrackingSince(v.trackingSince, now), rows: deviceRowsFor(v) });
+    sections.push({ name, heading, resetsAt, total: `Total ${fmtNum(v.totalPts)}% used`, since: formatTrackingSince(v.trackingSince, now), rows: deviceRowsFor(v) });
   }
   if (sections.length) return { kind: "ok", sections };
   if (plan === "free" && !acct?.windows?.length) return { kind: "empty", message: "Per-device usage needs a Pro/Max plan usage reading." };

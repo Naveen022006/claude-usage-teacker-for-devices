@@ -45,7 +45,7 @@ export const SIDEBAR_CSS = `
 .sb-row.attr.other .sb-lbl, .sb-row.attr.other .sb-pts { color: var(--muted); }
 .sb-dev-lbl { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; line-height: 1.3; }
 .sb-item.sb-dev.other .sb-dev-lbl { color: var(--muted); }
-.sb-row.dev { grid-template-columns: minmax(0, 1fr) 3em 2.8em; margin-top: 2px; }
+.sb-row.dev { grid-template-columns: minmax(0, 1fr) auto auto; column-gap: 8px; margin-top: 2px; }
 .sb-row.dev .sb-pts:first-child { text-align: left; }
 .sb-row.dev .sb-pts { white-space: nowrap; }
 .sb-row.dev .sb-pts.sh { text-align: right; }

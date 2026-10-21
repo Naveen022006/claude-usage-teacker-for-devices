@@ -113,7 +113,17 @@ export function describeShape(json: unknown): Record<string, string | Record<str
       const sub = Array.isArray(v) ? v[0] : v;
       if (typeof sub === "object" && sub !== null && !Array.isArray(sub)) {
         const m: Record<string, string> = {};
-        for (const [k2, v2] of Object.entries(sub).slice(0, 40)) m[k2.slice(0, 40)] = t(v2);
+        for (const [k2, v2] of Object.entries(sub).slice(0, 40)) {
+          const key2 = k2.slice(0, 40);
+          m[key2] = t(v2);
+          const first = Array.isArray(v2) ? v2[0] : undefined;
+          if (typeof first === "object" && first !== null && !Array.isArray(first)) {
+            for (const [k3, v3] of Object.entries(first)) {
+              if (Object.keys(m).length >= 40) break;
+              m[`${key2}[0].${k3.slice(0, 40)}`] = t(v3);
+            }
+          }
+        }
         out[k.slice(0, 40)] = Array.isArray(v) ? { "(array)": t(v), ...m } : m;
       } else out[k.slice(0, 40)] = t(v);
     }

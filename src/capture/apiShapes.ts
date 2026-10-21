@@ -7,7 +7,7 @@ const MAX_DEPTH = 3;
 const MAX_KEYS = 40;
 const MAX_KEY_LEN = 40;
 const RING = 20;
-const SESSION_KEY_RE = /created|updated|last_?(active|used|seen)|device|user_?agent|platform|browser|location|current/i;
+const SESSION_KEY_RE = /created|updated|last_?(active|used|seen)|is_?current|device|user_?agent|platform|browser|location|current/i;
 
 export function isSettingsPath(pathname: string): boolean {
   return typeof pathname === "string" && pathname.startsWith("/settings");

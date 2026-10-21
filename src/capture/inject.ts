@@ -112,9 +112,12 @@ function methodOf(input: RequestInfo | URL, init?: RequestInit): string {
   return String(m).toUpperCase();
 }
 
-/** Settings-page discovery: records only the SHAPE of a JSON GET response, from a clone, off the page's path. */
+/** Devices-list discovery: records only the SHAPE of a JSON GET response, from a clone, off the page's path. */
 function noteApiShape(u: URL, res: Response): void {
   try {
+    const len = Number(res.headers.get("content-length"));
+    if (Number.isFinite(len) && len > 2_000_000) return;
+    const onSettings = isSettingsPath(location.pathname);
     const pattern = pathPattern(u.href);
     const status = res.status;
     res
@@ -122,7 +125,10 @@ function noteApiShape(u: URL, res: Response): void {
       .json()
       .then((json) => {
         const shape = shapeOf(json);
-        diag.apiShapes.add({ at: Date.now(), method: "GET", pathPattern: pattern, status, shape, looksLikeSessionList: looksLikeSessionList(shape) });
+        const isList = looksLikeSessionList(shape);
+        // Settings may open as a modal over a chat URL, so a session-list-shaped response is recorded on any page.
+        if (!onSettings && !isList) return;
+        diag.apiShapes.add({ at: Date.now(), method: "GET", pathPattern: pattern, status, shape, looksLikeSessionList: isList });
         scheduleDiag();
       })
       .catch(() => {});
@@ -171,7 +177,7 @@ function wrap(orig: typeof fetch): typeof fetch {
     try {
       const ct = res.headers.get("content-type") ?? "";
       const isSse = ct.includes("text/event-stream");
-      if (method === "GET" && !isSse && ct.includes("json") && isSettingsPath(location.pathname)) noteApiShape(u, res);
+      if (method === "GET" && !isSse && ct.includes("json")) noteApiShape(u, res);
       if (!matched && !isSse && method !== "POST") return res; // ordinary API chatter: not worth a ring slot
       const obs = diag.observe({
         pathPattern: pathPattern(u.href),

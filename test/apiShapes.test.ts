@@ -58,6 +58,14 @@ describe("looksLikeSessionList", () => {
   });
 });
 
+describe("looksLikeSessionList variants", () => {
+  it("recognises a wrapped list with user_agent / last_active_at keys and rejects other objects", () => {
+    const wrapped = { items: [{ user_agent: "lorem", last_active_at: "x", is_current: false }] };
+    expect(looksLikeSessionList(shapeOf(wrapped))).toBe(true);
+    expect(looksLikeSessionList(shapeOf({ name: "lorem", count: 3 }))).toBe(false);
+  });
+});
+
 describe("ApiShapeRing", () => {
   it("dedupes by method+path keeping the newest, newest last", () => {
     const r = new ApiShapeRing();

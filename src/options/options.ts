@@ -191,6 +191,7 @@ function renderDiag(d: DiagData): void {
   lastDiag = d;
   renderUsageDiag(d.usage, d.tray);
   const p = d.page;
+  renderApiShapes(p?.apiShapes ?? []);
   const yn = (b: boolean) => (b ? "yes" : "no");
   fillTable($("diagCounters"), null, [
     ["Hook installed (last report)", p ? yn(p.hookInstalled) : "no report yet - reload claude.ai"],
@@ -216,6 +217,35 @@ function renderDiag(d: DiagData): void {
       o.recorded ? "yes" : "no" + (o.reason ? `: ${o.reason}` : ""),
     ]),
   );
+}
+
+function shapeLines(s: import("../shared/types").ApiShape, indent = 0): string[] {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(s)) {
+    if (typeof v === "string") out.push(`${"  ".repeat(indent)}${k}: ${v}`);
+    else out.push(`${"  ".repeat(indent)}${k}:`, ...shapeLines(v, indent + 1));
+  }
+  return out;
+}
+
+function renderApiShapes(list: import("../shared/types").ApiShapeObservation[]): void {
+  const rows = list.slice().reverse();
+  const box = $("diagShapeList");
+  box.replaceChildren();
+  if (!rows.length) {
+    fillTable($("diagShapes"), null, [["Open claude.ai \u2192 Settings (the page that lists your devices) with this extension enabled, then come back."]]);
+    return;
+  }
+  fillTable($("diagShapes"), ["Time", "Path", "HTTP", "Sessions list?"], rows.map((o) => [
+    new Date(o.at).toLocaleTimeString(), o.pathPattern, String(o.status), o.looksLikeSessionList ? "yes" : "\u2014",
+  ]));
+  for (const o of rows) {
+    const d = document.createElement("details");
+    const sum = Object.assign(document.createElement("summary"), { textContent: `${o.method} ${o.pathPattern}` });
+    const pre = Object.assign(document.createElement("pre"), { textContent: shapeLines(o.shape).join("\n") });
+    d.append(sum, pre);
+    box.append(d);
+  }
 }
 
 function renderUsageDiag(u: import("../shared/types").UsageDiag | null | undefined, tray: import("../shared/types").TrayDiag | null | undefined): void {

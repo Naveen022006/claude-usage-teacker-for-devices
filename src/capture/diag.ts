@@ -2,6 +2,7 @@
 // only redacted path patterns, content types, status codes and SSE event *names*.
 
 import type { CaptureDiag, DiagObservation } from "../shared/types";
+import { ApiShapeRing } from "./apiShapes";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RING = 20;
@@ -34,6 +35,7 @@ export class DiagState {
   emptyStreams = 0;
   eventsPosted = 0;
   private ring: DiagObservation[] = [];
+  readonly apiShapes = new ApiShapeRing();
 
   observe(o: Omit<DiagObservation, "at">): DiagObservation {
     const obs: DiagObservation = { at: Date.now(), ...o };
@@ -51,6 +53,7 @@ export class DiagState {
       emptyStreams: this.emptyStreams,
       eventsPosted: this.eventsPosted,
       observations: this.ring.map((o) => ({ ...o, eventTypes: o.eventTypes.slice(0, 15) })),
+      apiShapes: this.apiShapes.list(),
     };
   }
 }

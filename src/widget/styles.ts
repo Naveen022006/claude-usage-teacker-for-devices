@@ -70,6 +70,13 @@ button:focus-visible, .panel:focus-visible { outline: 2px solid var(--accent); o
 .mbar { grid-column: 1 / -1; height: 4px; }
 .mfill { height: 100%; background: var(--accent); border-radius: 2px; }
 
+.dev-head { display: flex; align-items: baseline; justify-content: space-between; padding-bottom: 4px; }
+.mrow.dev { grid-template-columns: 1fr auto auto; }
+.mrow.dev.other .mname { color: var(--muted); font-weight: 400; }
+.dev-badge { font-size: 10.5px; padding: 0 6px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface2); color: var(--muted); white-space: nowrap; }
+.dev-badge.high { color: var(--ok); }
+.dev-badge.low { color: var(--warn); }
+
 .foot { display: flex; flex-direction: column; gap: 2px; padding: 8px 14px 10px; border-top: 1px solid var(--border); }
 .err { color: var(--bad); }
 .link { background: none; border: 0; padding: 0; color: var(--accent); text-decoration: underline; text-align: left; font-size: 11.5px; }

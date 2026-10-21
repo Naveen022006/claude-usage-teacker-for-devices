@@ -1,5 +1,6 @@
 import { emptyLedger, normalizeLedger } from "./shared/attribution";
 import type { Ledger } from "./shared/attribution";
+import { emptyDeviceLedger, normalizeDeviceLedger, type DeviceLedger } from "./shared/deviceAttribution";
 import { DEFAULT_SETTINGS, DEFAULT_SW_DIAG, DEFAULT_SYNC_STATE, type DeviceInfo, type StorageShape } from "./shared/types";
 
 type Defaulted = Exclude<keyof StorageShape, "device">;
@@ -16,6 +17,7 @@ const DEFAULTS: { [K in Defaulted]: StorageShape[K] } = {
   usageDiag: null,
   trayDiag: null,
   limitLedger: emptyLedger(),
+  deviceLedger: emptyDeviceLedger(),
 };
 
 /** Pre-pivot settings used deskbuddyUrl / sharedToken. Rename once, drop the old LAN default. */
@@ -65,6 +67,19 @@ export function mutateLedger(fn: (l: Ledger) => Ledger): Promise<Ledger> {
     return next;
   });
   ledgerChain = run.catch(() => undefined);
+  return run;
+}
+
+let deviceLedgerChain: Promise<unknown> = Promise.resolve();
+/** Serialises read-modify-write on `deviceLedger`. */
+export function mutateDeviceLedger(fn: (l: DeviceLedger) => DeviceLedger): Promise<DeviceLedger> {
+  const run = deviceLedgerChain.then(async () => {
+    const cur = normalizeDeviceLedger(await get("deviceLedger"));
+    const next = fn(cur);
+    if (next !== cur) await set({ deviceLedger: next });
+    return next;
+  });
+  deviceLedgerChain = run.catch(() => undefined);
   return run;
 }
 

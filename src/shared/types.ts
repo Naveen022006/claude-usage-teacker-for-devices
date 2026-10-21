@@ -2,6 +2,7 @@
 // Nothing in here may ever hold message text.
 
 import type { Ledger } from "./attribution";
+import type { DeviceLedger } from "./deviceAttribution";
 
 export type Source = "chrome" | "claude-code" | "desktop";
 export type EventStatus = "ok" | "error" | "aborted";
@@ -137,6 +138,8 @@ export interface StorageShape {
   usageDiag: UsageDiag | null;
   trayDiag: TrayDiag | null;
   limitLedger: Ledger;
+  /** per-device plan-limit attribution (deviceAttribution.ts) */
+  deviceLedger: DeviceLedger;
 }
 
 /** POST /api/report body — docs/04-device-sync.md. Keep `v` versioned. */
@@ -172,6 +175,21 @@ export interface CaptureDiag {
   emptyStreams: number;
   eventsPosted: number;
   observations: DiagObservation[];
+  /** Shapes of JSON API responses seen on claude.ai settings pages (key names and value types only). */
+  apiShapes?: ApiShapeObservation[];
+}
+
+/** Key names mapped to type names or nested shapes. Never holds values. */
+export type ApiShape = { [key: string]: string | ApiShape };
+
+/** One JSON GET response seen on a settings page: redacted path and SHAPE only. */
+export interface ApiShapeObservation {
+  at: number;
+  method: string;
+  pathPattern: string;
+  status: number;
+  shape: ApiShape;
+  looksLikeSessionList: boolean;
 }
 
 /** Service-worker-side counters, stored as `swDiag`. */

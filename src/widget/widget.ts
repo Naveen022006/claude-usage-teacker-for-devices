@@ -25,6 +25,9 @@ import {
   humanizeWindow,
   mergeDevices,
   attributionRows,
+  devicesPanel,
+  DEVICES_FOOTER,
+  type DeviceRowView,
   modelRows,
   pillLabel,
   sbTone,
@@ -115,6 +118,11 @@ const SB_WINDOWS: { id: TabId; label: string }[] = [
   { id: "session", label: "5h" },
   { id: "today", label: "Today" },
   { id: "week", label: "7d" },
+  { id: "devices", label: "Devices" },
+];
+const SB_VIEWS: { id: TabId; label: string }[] = [
+  { id: "session", label: "Models" },
+  { id: "devices", label: "Devices" },
 ];
 const MAX_MODEL_ROWS = 6;
 const COUNTDOWN_MS = 1_000;
@@ -556,11 +564,12 @@ class Widget {
     return a;
   }
 
-  private sbSwitch(): HTMLElement {
-    const wrapEl = h("div", { class: "sb-switch", role: "group", "aria-label": "Time window" });
-    SB_WINDOWS.forEach((t, i) => {
+  /** `views` = Models | Devices (Pro/Max attribution layout); default = the time-window switch (Free layout). */
+  private sbSwitch(views = false): HTMLElement {
+    const wrapEl = h("div", { class: "sb-switch", role: "group", "aria-label": views ? "View" : "Time window" });
+    (views ? SB_VIEWS : SB_WINDOWS).forEach((t, i) => {
       if (i) wrapEl.append(h("span", { class: "sep", "aria-hidden": "true" }, "·"));
-      const sel = t.id === this.tab;
+      const sel = views ? (t.id === "devices") === (this.tab === "devices") : t.id === this.tab;
       const b = h("button", { type: "button", class: sel ? "on" : "", "aria-pressed": String(sel), "data-fk": `sb-win-${t.id}` }, t.label);
       b.addEventListener("click", () => {
         this.tab = t.id;
@@ -574,7 +583,7 @@ class Widget {
   /** Pro/Max: points of the 5h and weekly limits per model (estimated from usage changes), tokens muted on the right. */
   private sbAttribution(s: WidgetState): HTMLElement[] {
     const out: HTMLElement[] = [
-      h("div", { class: "sb-sub sb-cols", title: "≈ attributed from changes in your plan usage after each reply" }, h("span", {}, "Models"), h("span", { class: "c" }, "5h"), h("span", { class: "c" }, "Week"), h("span", { class: "c" }, "Tokens")),
+      h("div", { class: "sb-sub sb-cols", title: "≈ attributed from changes in your plan usage after each reply" }, h("span", {}, "Model"), h("span", { class: "c" }, "5h"), h("span", { class: "c" }, "Week"), h("span", { class: "c" }, "Tokens")),
     ];
     const tokens: Record<string, number> = {};
     let estimated = true;
@@ -606,7 +615,8 @@ class Widget {
   private sbModels(s: WidgetState): HTMLElement[] {
     const ws = s.accountUsage?.windows ?? [];
     const attributed = s.plan !== "free" && ws.some((w) => w.name === "five_hour" || w.name === "seven_day");
-    if (attributed) return this.sbAttribution(s);
+    if (this.tab === "devices") return [h("div", { class: "sb-sub" }, h("span", {}, "Usage split"), this.sbSwitch(attributed)), ...this.sbDevices(s)];
+    if (attributed) return [h("div", { class: "sb-sub" }, h("span", {}, "Usage split"), this.sbSwitch(true)), ...this.sbAttribution(s)];
     const out: HTMLElement[] = [h("div", { class: "sb-sub" }, h("span", {}, "Models"), this.sbSwitch())];
     let agg: WindowAggregate;
     let estimated: boolean;
@@ -644,6 +654,29 @@ class Widget {
     }
     if (shares.length > MAX_MODEL_ROWS) out.push(h("div", { class: "sb-none" }, `+${shares.length - MAX_MODEL_ROWS} more`));
     return out;
+  }
+
+  /** Devices view (sidebar): per window, points of the limit used by each device + confidence. */
+  private sbDevices(s: WidgetState): HTMLElement[] {
+    const v = devicesPanel(s.devices, s.accountUsage, s.plan);
+    if (v.kind === "empty") return [h("div", { class: "sb-none" }, v.message)];
+    const out: HTMLElement[] = [];
+    for (const sec of v.sections) {
+      const cd = this.sbCountdown(sec.resetsAt ?? undefined);
+      out.push(h("div", { class: "sb-sub" }, h("span", {}, sec.heading), cd ? h("span", { class: "sb-right" }, "resets in ", cd) : null));
+      for (const r of sec.rows) out.push(this.sbDeviceRow(r));
+      out.push(h("div", { class: "sb-none" }, sec.total));
+    }
+    out.push(h("div", { class: "sb-diag" }, DEVICES_FOOTER));
+    return out;
+  }
+
+  private sbDeviceRow(r: DeviceRowView): HTMLElement {
+    const badge = r.badge ? h("span", { class: `dev-badge ${r.badge === "Low" ? "low" : "high"}`, title: r.title }, r.badge) : h("span");
+    const row = h("div", { class: `sb-row dev${r.unattributed ? " other" : ""}`, "data-dev": r.key }, h("span", { class: "sb-pts" }, r.pts), h("span", { class: "sb-pts sh" }, r.share), badge);
+    const label = h("div", { class: "sb-dev-lbl", title: r.label }, r.label);
+    const bar = r.unattributed ? null : h("div", { class: "sb-bar", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(r.bar)), "aria-label": r.label }, h("div", { class: "sb-fill", style: `width:${r.bar}%` }));
+    return h("div", { class: `sb-item sb-dev${r.unattributed ? " other" : ""}`, title: r.title }, label, row, bar);
   }
 
   /** Temporary capture diagnostics: counters, redacted path patterns and event-type names only. */
@@ -738,7 +771,37 @@ class Widget {
     return list;
   }
 
+  /** Devices tab of the floating panel. */
+  private renderDeviceUsage(s: WidgetState, now: number): HTMLElement {
+    const wrap = h("div", { class: "devices", id: "devices", role: "tabpanel", "aria-labelledby": "tab-devices" });
+    const v = devicesPanel(s.devices, s.accountUsage, s.plan);
+    if (v.kind === "empty") {
+      wrap.append(h("p", { class: "small muted" }, v.message));
+      return wrap;
+    }
+    for (const sec of v.sections) {
+      const reset = formatResetsIn(sec.resetsAt ?? undefined, now);
+      const card = h("div", { class: "card open" }, h("div", { class: "dev-head" }, h("span", { class: "card-title" }, sec.heading), reset ? h("span", { class: "small muted" }, reset === "now" ? "resetting now" : `resets in ${reset}`) : null));
+      for (const r of sec.rows) {
+        const bar = r.unattributed ? null : h("div", { class: "mbar", "aria-hidden": "true" }, h("div", { class: "mfill", style: `width:${Math.max(2, r.bar)}%` }));
+        card.append(
+          h("div", { class: `mrow dev${r.unattributed ? " other" : ""}`, title: r.title, "data-dev": r.key },
+            h("span", { class: "mname" }, r.label),
+            h("span", { class: "mnum" }, `${r.pts} · ${r.share}`),
+            r.badge ? h("span", { class: `dev-badge ${r.badge === "Low" ? "low" : "high"}`, title: r.title }, r.badge) : h("span"),
+            bar,
+          ),
+        );
+      }
+      card.append(h("div", { class: "totals" }, sec.total));
+      wrap.append(card);
+    }
+    wrap.append(h("p", { class: "small muted" }, DEVICES_FOOTER));
+    return wrap;
+  }
+
   private renderDevices(s: WidgetState, now: number): HTMLElement[] {
+    if (this.tab === "devices") return [this.renderDeviceUsage(s, now)];
     const win = TABS.find((t) => t.id === this.tab)!.window;
     const cards = mergeDevices({ deviceId: s.device.deviceId, windows: s.aggregates }, s.hub.devices);
     const wrap = h("div", { class: "devices", id: "devices", role: "tabpanel", "aria-labelledby": `tab-${this.tab}` });

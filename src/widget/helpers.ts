@@ -549,7 +549,7 @@ export interface DeviceRowView {
   pts: string; // "9.0 pts"
   share: string; // "56%"
   bar: number; // 0-100
-  badge: "High" | "Low" | null; // null for the Unattributed row
+  badge: "High" | "Medium" | "Low" | null; // null for the Unattributed row
   title: string;
   unattributed: boolean;
   /** muted explanation under the row (waiting for the % to move / nothing yet), else null */
@@ -571,9 +571,10 @@ export const DEVICES_UNATTRIBUTED_MIN = 0.05;
 export const DEVICES_FOOTER = "Estimates. Anthropic does not publish per-device usage.";
 const CONFIDENCE_TITLE = {
   High: "High: only this device was active when usage rose.",
+  Medium: "Medium: only a sessions-list change (no direct count) showed this device was active.",
   Low: "Low: several devices were active, so the rise was split by estimated cost.",
 } as const;
-const UNATTRIBUTED_TITLE = "Other devices without the extension (phone, Claude Desktop chats) and usage from before tracking started.";
+const UNATTRIBUTED_TITLE = "Usage no device could be matched to: devices whose Updated time didn't change, and usage from before tracking started.";
 export const WAITING_NOTE = "Waiting for the usage % to move";
 export const NO_LOCAL_USAGE_NOTE = "No usage from this browser yet in this window";
 
@@ -592,7 +593,7 @@ const sharePct = (pts: number, total: number): number => (total > 0 ? clampPct((
 /** Display rows for one window: one per device (already sorted by the engine), then "Unattributed" when >= 0.05 pts. */
 export function deviceRowsFor(view: DeviceWindowView): DeviceRowView[] {
   const rows: DeviceRowView[] = view.rows.map((r) => {
-    const badge = r.confidence === "low" ? "Low" : "High";
+    const badge = r.confidence === "low" ? "Low" : r.confidence === "medium" ? "Medium" : "High";
     const share = sharePct(r.pts, view.totalPts);
     return { key: r.key, label: r.label, pts: fmtPts(r.pts), share: `${Math.round(share)}%`, bar: share, badge, title: `${r.label} · ${fmtPts(r.pts)} · ${CONFIDENCE_TITLE[badge]}`, unattributed: false, note: r.waiting ? WAITING_NOTE : r.key === "local" && !(r.pts >= DEVICES_UNATTRIBUTED_MIN) ? NO_LOCAL_USAGE_NOTE : null };
   });

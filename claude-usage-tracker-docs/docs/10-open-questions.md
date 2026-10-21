@@ -5,9 +5,9 @@ Fill in during Phase 0 and 4.
 | # | Question | Answer |
 |---|---|---|
 | 1 | Where does the extension get usage today (page element or endpoint)? Fields and precision? | Endpoint: `GET claude.ai/api/organizations/{orgId}/usage` from the service worker with the browser's sign-in. Fields: `limits[{kind, percent, resets_at, scope.model.display_name}]` (kinds `session`, `weekly_all`, `weekly_scoped`), older shape `five_hour` / `seven_day` with `utilization`, `resets_at`. Parsed into `five_hour`, `seven_day`, `seven_day_<model>`. Precision: not known from code, see Q8. (E1, code reading) |
-| 2 | Can the sessions list be read (DOM or endpoint)? Is the Current row detectable? | Not known from code; nothing reads it yet. Next: discovery diagnostic in the fetch hook (doc 05 §2), then the user opens the sessions page once. |
+| 2 | Can the sessions list be read (DOM or endpoint)? Is the Current row detectable? | Yes, by endpoint: `GET /api/auth/sessions/list-active` → `{ data: [{ application_slug, created_at, expires_at, is_current, location_info{}, session_uuid, updated_at, user_agent{} }], pagination{ has_more, limit, offset, total } }`. `is_current` marks this browser. Found with the settings-page shape diagnostic on 2026-10-21 (7 rows = 7 rows in the UI). Inner keys of `user_agent` still to confirm (the reader records them in diagnostics). Settings opens as a modal, so the URL is not always `/settings`. |
 | 3 | What exactly makes a session's Updated change (message sent, app opened, token refresh)? | |
-| 4 | How long after use does Updated change? | |
+| 4 | How long after use does Updated change? | First sign (2026-10-21): the Current Chrome row showed the same Updated (9:52 AM) in two screenshots taken a while apart, so Updated may not move on every message. Needs the E2 test. |
 | 5 | Do idle sessions change Updated on their own? | |
 | 6 | Does Claude Desktop or iOS update its row when used for chat? When used for Claude Code? | |
 | 7 | How many physical machines are behind the Claude Desktop rows? | |

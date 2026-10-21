@@ -6,6 +6,7 @@
 
 import type { AttributionView } from "./attribution";
 import type { DeviceView } from "./deviceAttribution";
+import type { SessionsDiag } from "../sync/sessions";
 import type {
   Aggregates,
   AccountUsage,
@@ -116,8 +117,8 @@ export interface UiResponseData {
   "get-hub-devices": WidgetState["hub"];
   "test-connection": { reachable: boolean; detail: string };
   "sync-now": SyncState;
-  "get-diag": { page: CaptureDiag | null; sw: SwDiag; usage: UsageDiag | null; tray: TrayDiag | null };
-  "reset-diag": { page: CaptureDiag | null; sw: SwDiag; usage: UsageDiag | null; tray: TrayDiag | null };
+  "get-diag": { page: CaptureDiag | null; sw: SwDiag; usage: UsageDiag | null; tray: TrayDiag | null; sessions: SessionsDiag | null };
+  "reset-diag": { page: CaptureDiag | null; sw: SwDiag; usage: UsageDiag | null; tray: TrayDiag | null; sessions: SessionsDiag | null };
   "reset-attribution": null;
   "export-data": { json: string };
   "clear-data": UiState;

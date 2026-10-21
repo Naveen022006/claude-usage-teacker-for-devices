@@ -76,6 +76,7 @@ button:focus-visible, .panel:focus-visible { outline: 2px solid var(--accent); o
 .dev-note { padding: 0 0 2px 20px; }
 .dev-badge { font-size: 10.5px; padding: 0 6px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface2); color: var(--muted); white-space: nowrap; }
 .dev-badge.high { color: var(--ok); }
+.dev-badge.medium { color: var(--blue); }
 .dev-badge.low { color: var(--warn); }
 
 .foot { display: flex; flex-direction: column; gap: 2px; padding: 8px 14px 10px; border-top: 1px solid var(--border); }

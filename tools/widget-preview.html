@@ -83,10 +83,12 @@
       attribution: { five_hour: { byModel: { "claude-opus-4-5": 52, "claude-sonnet-5-5": 19 }, other: 8 }, seven_day: { byModel: { "claude-opus-4-5": 7, "claude-sonnet-5-5": 3 }, other: 1 } },
       devices: { five_hour: { cycle: new Date(now + 295 * min).toISOString(), totalPts: 15, unattributedPts: 2, rows: [
           { key: "local", label: "Chrome (this browser)", pts: 9, share: 0.6, confidence: "high", waiting: false },
-          { key: "hub:dk", label: "Claude Desktop (Windows)", pts: 4, share: 4 / 15, confidence: "low", waiting: true } ], trackingSince: now - 95 * min },
+          { key: "hub:dk", label: "Claude Desktop (Windows)", pts: 4, share: 4 / 15, confidence: "low", waiting: true },
+          { key: "session:ios", label: "Claude (iOS)", pts: 1, share: 1 / 15, confidence: "medium", waiting: false } ], trackingSince: now - 95 * min },
         seven_day: { cycle: new Date(now + 3 * 86400000).toISOString(), totalPts: 11, unattributedPts: 1.5, rows: [
           { key: "local", label: "Chrome (this browser)", pts: 6, share: 6 / 11, confidence: "high", waiting: false },
-          { key: "hub:dk", label: "Claude Desktop (Windows)", pts: 3.5, share: 3.5 / 11, confidence: "low", waiting: false } ], trackingSince: now - 26 * 3600000 } },
+          { key: "hub:dk", label: "Claude Desktop (Windows)", pts: 3.5, share: 3.5 / 11, confidence: "low", waiting: false },
+          { key: "session:ios", label: "Claude (iOS)", pts: 1, share: 1 / 11, confidence: "medium", waiting: false } ], trackingSince: now - 26 * 3600000 } },
       syncState: { lastOkAt: now - 20000, lastAttemptAt: now, lastError: null, queue: 0 }, showWidget: true, codeDeviceIds: [], now: now,
       captureDiag: { updatedAt: now, hookInstalled: true, fetchCalls: 42, streamsSeen: 3, emptyStreams: 0, eventsPosted: 0, observations: [{ at: now, pathPattern: "/api/organizations/:id/chat_conversations/:id/completion", contentType: "text/event-stream", status: 200, matchedRegex: true, eventTypes: ["message_start", "content_block_start", "content_block_delta", "message_delta", "message_stop"], recorded: false }] },
       swDiag: { eventsReceived: 0, eventsRejected: 0, lastRejectReason: null, eventsStored: 0 },

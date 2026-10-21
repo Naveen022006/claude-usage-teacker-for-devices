@@ -673,7 +673,7 @@ class Widget {
   }
 
   private sbDeviceRow(r: DeviceRowView): HTMLElement {
-    const badge = r.badge ? h("span", { class: `dev-badge ${r.badge === "Low" ? "low" : "high"}`, title: r.title }, r.badge) : h("span");
+    const badge = r.badge ? h("span", { class: `dev-badge ${r.badge === "Low" ? "low" : r.badge === "Medium" ? "medium" : "high"}`, title: r.title }, r.badge) : h("span");
     const row = h("div", { class: `sb-row dev${r.unattributed ? " other" : ""}`, "data-dev": r.key }, h("span", { class: "sb-pts" }, r.pts), h("span", { class: "sb-pts sh" }, r.share), badge);
     const label = h("div", { class: "sb-dev-lbl", title: r.label }, r.label);
     const bar = r.unattributed ? null : h("div", { class: "sb-bar", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(r.bar)), "aria-label": r.label }, h("div", { class: "sb-fill", style: `width:${r.bar}%` }));
@@ -789,7 +789,7 @@ class Widget {
           h("div", { class: `mrow dev${r.unattributed ? " other" : ""}`, title: r.title, "data-dev": r.key },
             h("span", { class: "mname" }, r.label),
             h("span", { class: "mnum" }, `${r.pts} · ${r.share}`),
-            r.badge ? h("span", { class: `dev-badge ${r.badge === "Low" ? "low" : "high"}`, title: r.title }, r.badge) : h("span"),
+            r.badge ? h("span", { class: `dev-badge ${r.badge === "Low" ? "low" : r.badge === "Medium" ? "medium" : "high"}`, title: r.title }, r.badge) : h("span"),
             bar,
           ),
         );

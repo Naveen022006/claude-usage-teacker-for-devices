@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addDeviceContribution, applyDeviceReading, deviceView, emptyDeviceLedger, normalizeDeviceLedger, recordHubDevices,
+  addDeviceContribution, addSessionActivity, applyReadingWithSessions, applyDeviceReading, rememberNames, deviceView, emptyDeviceLedger, normalizeDeviceLedger, recordHubDevices,
   type DeviceLedger,
 } from "../src/shared/deviceAttribution";
 
@@ -243,5 +243,76 @@ describe("always-visible local row, waiting and since", () => {
   it("normalizeDeviceLedger tolerates missing/garbage since", () => {
     expect(normalizeDeviceLedger({ since: { five_hour: "x", seven_day: 5 } }).since).toEqual({ seven_day: 5 });
     expect(normalizeDeviceLedger({}).since).toEqual({});
+  });
+});
+
+describe("addSessionActivity (sessions-list evidence)", () => {
+  it("session key alone during a rise gets the whole rise, medium confidence", () => {
+    let dl = start();
+    dl = addSessionActivity(dl, ["session:a"], usage(5, 1), T0 + 4000);
+    dl = applyDeviceReading(dl, usage(5, 1), T0 + 5000);
+    const r = rowOf(dl, "session:a")!;
+    expect(r.pts).toBeCloseTo(5);
+    expect(r.confidence).toBe("medium");
+    expect(r.label).toBe("Signed-in device");
+    conserved(dl, "five_hour", 5);
+  });
+
+  it("session key + local reply in the same rise splits, both low", () => {
+    let dl = start();
+    dl = addDeviceContribution(dl, "local", 10, T0 + 1000);
+    dl = addSessionActivity(dl, ["session:a"], usage(8, 0), T0 + 4000);
+    dl = applyDeviceReading(dl, usage(8, 0), T0 + 5000);
+    expect(rowOf(dl, "local")!.pts).toBeCloseTo(4);
+    expect(rowOf(dl, "session:a")!.pts).toBeCloseTo(4);
+    expect(rowOf(dl, "local")!.confidence).toBe("low");
+    expect(rowOf(dl, "session:a")!.confidence).toBe("low");
+  });
+
+  it("no rise leaves the ledger unchanged", () => {
+    const dl = start(10, 1);
+    expect(addSessionActivity(dl, ["session:a"], usage(10, 1), T0 + 1000)).toBe(dl);
+    expect(addSessionActivity(dl, ["session:a"], null, T0 + 1000)).toBe(dl);
+    expect(addSessionActivity(dl, ["session:a"], usage(3, 0, "2026-01-01T19:00:00Z", "2026-01-09T10:00:00Z"), T0 + 1000)).toBe(dl);
+  });
+
+  it("weight is the mean of others' pending weights, 1 when none", () => {
+    let dl = start();
+    dl = addDeviceContribution(dl, "local", 10, T0 + 1000);
+    dl = addDeviceContribution(dl, "hub:d1", 30, T0 + 1000);
+    dl = addSessionActivity(dl, ["session:a"], usage(1, 0), T0 + 2000);
+    expect(dl.ledger.pendingW.five_hour!["session:a"]).toBeCloseTo(20);
+    const solo = addSessionActivity(start(), ["session:b"], usage(1, 0), T0 + 2000);
+    expect(solo.ledger.pendingW.five_hour!["session:b"]).toBeCloseTo(1);
+  });
+
+  it("normalizeDeviceLedger keeps/validates method; rememberNames merges", () => {
+    const dl = addSessionActivity(start(), ["session:a"], usage(1, 0), T0 + 2000);
+    expect(normalizeDeviceLedger(JSON.parse(JSON.stringify(dl))).method).toEqual({ "session:a": "updated" });
+    expect(normalizeDeviceLedger({ method: { x: "updated", y: "bogus", z: 3 } }).method).toEqual({ x: "updated" });
+    expect(normalizeDeviceLedger({ method: "junk" }).method).toEqual({});
+    const named = rememberNames(dl, { "session:a": " Claude iOS ", "session:b": "" });
+    expect(named.names).toEqual({ "session:a": "Claude iOS" });
+    const after = applyDeviceReading(addSessionActivity(named, ["session:a"], usage(2, 0), T0 + 3000), usage(2, 0), T0 + 4000);
+    expect(rowOf(after, "session:a")!.label).toBe("Claude iOS");
+  });
+});
+
+describe("applyReadingWithSessions", () => {
+  const rd = (u5: number, u7: number, fetchedAt: number) => ({ fetchedAt, ...usage(u5, u7) });
+
+  it("credits a changed session for the rise (activity sees the ledger before the reading)", () => {
+    let dl = start();
+    dl = applyReadingWithSessions(dl, rd(8, 0, T0 + 5000), ["session:a"], { "session:a": "Claude (iOS)" }, T0 + 5000);
+    expect(rowOf(dl, "session:a")!.pts).toBeCloseTo(8);
+    expect(rowOf(dl, "session:a")!.label).toBe("Claude (iOS)");
+    expect(rowOf(dl, "session:a")!.confidence).toBe("medium");
+  });
+
+  it("with no sessions it equals a plain reading", () => {
+    const dl = start();
+    const a = applyReadingWithSessions(dl, rd(8, 0, T0 + 5000), [], {}, T0 + 5000);
+    const b = applyDeviceReading(dl, rd(8, 0, T0 + 5000), T0 + 5000);
+    expect(a.ledger).toEqual(b.ledger);
   });
 });

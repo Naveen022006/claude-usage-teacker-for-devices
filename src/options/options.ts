@@ -9,6 +9,7 @@ const syncEl = $<HTMLInputElement>("syncEnabled");
 const cptEl = $<HTMLInputElement>("cpt");
 const cptOut = $<HTMLOutputElement>("cptOut");
 const pollEl = $<HTMLInputElement>("poll");
+const readSessionsEl = $<HTMLInputElement>("readSessions");
 const widgetEl = $<HTMLInputElement>("showWidget");
 const statusEl = $("status");
 const devicesEl = $("codeDevices");
@@ -48,6 +49,7 @@ function fill(s: Settings): void {
   cptEl.value = String(s.charsPerToken);
   cptOut.textContent = Number(s.charsPerToken).toFixed(1);
   pollEl.checked = s.pollAccountUsage;
+  readSessionsEl.checked = s.readSessions;
   widgetEl.checked = s.showWidget;
   codeIds = new Set(s.codeDeviceIds ?? []);
   void loadHubDevices();
@@ -94,6 +96,7 @@ function currentSettings(): Partial<Settings> {
     syncEnabled: syncEl.checked,
     charsPerToken: Number(cptEl.value),
     pollAccountUsage: pollEl.checked,
+    readSessions: readSessionsEl.checked,
     showWidget: widgetEl.checked,
     codeDeviceIds: [...codeIds].slice(0, 20),
   };
@@ -173,7 +176,7 @@ $("clear").addEventListener("click", async () => {
 });
 
 // ---- diagnostics ----
-type DiagData = { page: import("../shared/types").CaptureDiag | null; sw: import("../shared/types").SwDiag; usage?: import("../shared/types").UsageDiag | null; tray?: import("../shared/types").TrayDiag | null };
+type DiagData = { page: import("../shared/types").CaptureDiag | null; sw: import("../shared/types").SwDiag; usage?: import("../shared/types").UsageDiag | null; tray?: import("../shared/types").TrayDiag | null; sessions?: import("../sync/sessions").SessionsDiag | null };
 let lastDiag: DiagData | null = null;
 
 function fillTable(t: HTMLElement, head: string[] | null, rows: string[][]): void {
@@ -190,6 +193,7 @@ function fillTable(t: HTMLElement, head: string[] | null, rows: string[][]): voi
 function renderDiag(d: DiagData): void {
   lastDiag = d;
   renderUsageDiag(d.usage, d.tray);
+  renderSessionsDiag(d.sessions);
   const p = d.page;
   renderApiShapes(p?.apiShapes ?? []);
   const yn = (b: boolean) => (b ? "yes" : "no");
@@ -260,6 +264,18 @@ function renderUsageDiag(u: import("../shared/types").UsageDiag | null | undefin
     tray ? `${new Date(tray.at).toLocaleTimeString()} · ${tray.status === null ? "not sent" : `HTTP ${tray.status}`}${tray.note ? ` · ${tray.note}` : ""}` : "not yet",
   ]);
   fillTable($("diagUsage"), null, rows);
+}
+
+function renderSessionsDiag(s: import("../sync/sessions").SessionsDiag | null | undefined): void {
+  if (!s) return fillTable($("diagSessions"), null, [["Devices list", "not read yet"]]);
+  fillTable($("diagSessions"), null, [
+    ["Last read", new Date(s.at).toLocaleTimeString()],
+    ["HTTP", s.status === null ? "error" : String(s.status)],
+    ["Parsed", s.parsed ? "yes" : "no"],
+    ["Sessions", String(s.count)],
+    ["More pages", s.hasMore ? "yes" : "no"],
+    ["user_agent keys", s.uaKeys.join(", ") || "-"],
+  ]);
 }
 
 async function loadDiag(): Promise<void> {

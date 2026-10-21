@@ -8,13 +8,14 @@
 // confidence). Invariant: sum(rows) + unattributed ~= current utilisation for each window.
 
 import {
-  ATTR_WINDOWS, addContribution, applyReading, emptyLedger, normalizeLedger, tokenWeight,
+  ATTR_WINDOWS, CYCLE_TOLERANCE_MS, addContribution, applyReading, emptyLedger, normalizeLedger, tokenWeight,
   type AttrWindow, type Ledger, type WindowLedger,
 } from "./attribution";
 
 export const LOCAL_KEY = "local";
 const MAX_HUB_DEVICES = 50;
 const MAX_NAME_LEN = 80;
+const MAX_METHOD_KEYS = 100;
 const MIN_ROW_PTS = 0.05;
 
 export interface DeviceLedger {
@@ -30,6 +31,8 @@ export interface DeviceLedger {
   names: Record<string, string>;
   /** time (ms) tracking began for the current cycle of each window (set on first sight / cycle change) */
   since: Partial<Record<AttrWindow, number>>;
+  /** device key -> evidence kind when weaker than events/tokens ("updated" = only the sessions-list Updated moved) */
+  method: Record<string, "updated">;
 }
 
 export interface DeviceRow {
@@ -37,7 +40,7 @@ export interface DeviceRow {
   label: string;
   pts: number;
   share: number;
-  confidence: "high" | "low";
+  confidence: "high" | "medium" | "low";
   /** this device has replies whose weight is still waiting for the usage % to move */
   waiting: boolean;
 }
@@ -63,7 +66,7 @@ export interface HubDeviceInput {
 }
 
 export function emptyDeviceLedger(): DeviceLedger {
-  return { ledger: emptyLedger(), splitPts: {}, cycle: {}, hubPrev: {}, names: {}, since: {} };
+  return { ledger: emptyLedger(), splitPts: {}, cycle: {}, hubPrev: {}, names: {}, since: {}, method: {} };
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -95,6 +98,12 @@ export function normalizeDeviceLedger(raw: unknown): DeviceLedger {
     if (isObj(raw.cycle)) for (const w of ATTR_WINDOWS) if (typeof raw.cycle[w] === "string") out.cycle[w] = raw.cycle[w] as string;
     out.hubPrev = numRecord(raw.hubPrev);
     out.names = nameRecord(raw.names);
+    if (isObj(raw.method)) {
+      for (const [k, v] of Object.entries(raw.method)) {
+        if (Object.keys(out.method).length >= MAX_METHOD_KEYS) break;
+        if (v === "updated") out.method[k] = "updated";
+      }
+    }
     if (isObj(raw.since)) for (const w of ATTR_WINDOWS) {
       const t = raw.since[w];
       if (typeof t === "number" && Number.isFinite(t) && t > 0) out.since[w] = t;
@@ -109,6 +118,85 @@ export function addDeviceContribution(dl: DeviceLedger, key: string, weight: num
   const source = key.startsWith("hub:") ? "hub" : "local";
   const ledger = addContribution(dl.ledger, { model: key, weight, ts, source });
   return ledger === dl.ledger ? dl : { ...dl, ledger };
+}
+
+function sameCycleStr(a: string, b: string): boolean {
+  if (a === b) return true;
+  const ta = Date.parse(a);
+  const tb = Date.parse(b);
+  return Number.isFinite(ta) && Number.isFinite(tb) && Math.abs(ta - tb) <= CYCLE_TOLERANCE_MS;
+}
+
+/**
+ * Evidence source 3: sessions-list rows whose Updated moved since the previous poll (devices without the extension).
+ * Call right BEFORE applyDeviceReading with the same reading. Does nothing unless that reading shows a rise in an
+ * attributed window (same cycle), so an Updated change without usage never leaves stale pending weight.
+ * Weight = mean of the positive pending weights of other keys (five_hour, else seven_day), or 1 when there are none.
+ */
+export function addSessionActivity(
+  dl: DeviceLedger,
+  keys: string[],
+  usage: { windows: { name: string; utilization: number; resetsAt?: string }[] } | null | undefined,
+  now: number,
+): DeviceLedger {
+  if (!usage || !keys.length) return dl;
+  let rise = false;
+  for (const name of ATTR_WINDOWS) {
+    const aw = usage.windows.find((w) => w.name === name);
+    const lw = dl.ledger.windows[name];
+    if (!aw || !lw || !Number.isFinite(aw.utilization) || lw.lastUtil === null) continue;
+    if (!sameCycleStr(lw.cycle, aw.resetsAt ?? "")) continue;
+    if (Math.min(100, Math.max(0, aw.utilization)) > lw.lastUtil + 1e-9) rise = true;
+  }
+  if (!rise) return dl;
+  const sessionKeys = [...new Set(keys.filter((k) => typeof k === "string" && k.startsWith("session:")))];
+  if (!sessionKeys.length) return dl;
+  const others = (name: AttrWindow): number[] =>
+    Object.entries(dl.ledger.pendingW[name] ?? {}).filter(([k, v]) => v > 0 && !sessionKeys.includes(k)).map(([, v]) => v);
+  let vals = others("five_hour");
+  if (!vals.length) vals = others("seven_day");
+  const weight = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 1;
+  const method = { ...dl.method };
+  let next: DeviceLedger = dl;
+  for (const k of sessionKeys) {
+    delete method[k];
+    method[k] = "updated";
+    next = addDeviceContribution(next, k, weight, now);
+  }
+  const mk = Object.keys(method);
+  if (mk.length > MAX_METHOD_KEYS) for (const k of mk.slice(0, mk.length - MAX_METHOD_KEYS)) delete method[k];
+  return { ...next, method };
+}
+
+/** Remembers display names for device keys (same caps/validation as hub names). */
+export function rememberNames(dl: DeviceLedger, names: Record<string, string>): DeviceLedger {
+  const merged = { ...dl.names };
+  let changed = false;
+  for (const [k, raw] of Object.entries(names ?? {})) {
+    const n = typeof raw === "string" ? raw.trim() : "";
+    if (!n || n.length > MAX_NAME_LEN || merged[k] === n) continue;
+    delete merged[k];
+    merged[k] = n;
+    changed = true;
+  }
+  if (!changed) return dl;
+  const nk = Object.keys(merged);
+  if (nk.length > MAX_HUB_DEVICES) for (const k of nk.slice(0, nk.length - MAX_HUB_DEVICES)) delete merged[k];
+  return { ...dl, names: merged };
+}
+
+/**
+ * One account-usage reading plus the sessions-list evidence. Order matters: addSessionActivity must see the ledger
+ * BEFORE the reading is applied (it checks for a rise against the previous reading and queues pending weight).
+ */
+export function applyReadingWithSessions(
+  dl: DeviceLedger,
+  usage: { fetchedAt: number; windows: { name: string; utilization: number; resetsAt?: string }[] } | null | undefined,
+  changed: string[],
+  names: Record<string, string>,
+  now: number,
+): DeviceLedger {
+  return applyDeviceReading(addSessionActivity(rememberNames(dl, names), changed, usage, now), usage, usage?.fetchedAt ?? now);
 }
 
 const sumOf = (w: WindowLedger): number => Object.values(w.byModel).reduce((a, b) => a + b, 0) + w.other;
@@ -214,10 +302,10 @@ export function deviceView(dl: DeviceLedger, labels: Record<string, string>): De
       if (!(pts >= MIN_ROW_PTS) && !waiting && key !== LOCAL_KEY) continue;
       rows.push({
         key,
-        label: labels[key] ?? dl.names[key] ?? (key.startsWith("hub:") ? "Other device" : key),
+        label: labels[key] ?? dl.names[key] ?? (key.startsWith("hub:") ? "Other device" : key.startsWith("session:") ? "Signed-in device" : key),
         pts,
         share: totalPts > 0 ? pts / totalPts : 0,
-        confidence: pts > 0 && (split[key] ?? 0) / pts >= 0.5 ? "low" : "high",
+        confidence: pts > 0 && (split[key] ?? 0) / pts >= 0.5 ? "low" : dl.method[key] === "updated" ? "medium" : "high",
         waiting,
       });
     }

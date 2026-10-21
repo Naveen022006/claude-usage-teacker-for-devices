@@ -18,6 +18,10 @@ const DEFAULTS: { [K in Defaulted]: StorageShape[K] } = {
   trayDiag: null,
   limitLedger: emptyLedger(),
   deviceLedger: emptyDeviceLedger(),
+  sessionSalt: null,
+  sessions: {},
+  sessionsDiag: null,
+  currentSessionLabel: null,
 };
 
 /** Pre-pivot settings used deskbuddyUrl / sharedToken. Rename once, drop the old LAN default. */
@@ -54,6 +58,15 @@ export async function ensureDevice(): Promise<DeviceInfo> {
   if (d?.deviceId) return d;
   const fresh: DeviceInfo = { deviceId: crypto.randomUUID(), deviceName: "Chrome" };
   await set({ device: fresh });
+  return fresh;
+}
+
+/** Returns the random salt for session keys, creating it once. */
+export async function ensureSessionSalt(): Promise<string> {
+  const s = await get("sessionSalt");
+  if (typeof s === "string" && s) return s;
+  const fresh = crypto.randomUUID();
+  await set({ sessionSalt: fresh });
   return fresh;
 }
 

@@ -43,6 +43,22 @@ export const SIDEBAR_CSS = `
 .sb-row.attr .sb-pts { color: var(--blue); text-align: right; white-space: nowrap; }
 .sb-row.attr .tk { color: var(--muted); text-align: right; white-space: nowrap; font-size: 12.5px; }
 .sb-row.attr.other .sb-lbl, .sb-row.attr.other .sb-pts { color: var(--muted); }
+.sb-dev-lbl { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; line-height: 1.3; }
+.sb-item.sb-dev.other .sb-dev-lbl { color: var(--muted); }
+.sb-row.dev { grid-template-columns: minmax(0, 1fr) auto auto; column-gap: 8px; margin-top: 2px; }
+.sb-row.dev .sb-pts:first-child { text-align: left; }
+.sb-row.dev .sb-pts { white-space: nowrap; }
+.sb-row.dev .sb-pts.sh { text-align: right; }
+.sb-row.dev .sb-pts.sh { color: var(--muted); font-size: 12.5px; }
+.sb-row.dev.other .sb-lbl, .sb-row.dev.other .sb-pts { color: var(--muted); }
+/* tinted pill: the base .dev-badge in styles.ts uses --surface2, which follows the OS scheme, so override it here */
+.wrap.sidebar .dev-badge { font-size: 10.5px; padding: 0 6px; border-radius: 8px; text-align: center; white-space: nowrap; cursor: help; }
+.wrap.sidebar .dev-badge.high { color: color-mix(in srgb, var(--blue) 85%, #000); background: color-mix(in srgb, var(--blue) 14%, transparent); border: 1px solid color-mix(in srgb, var(--blue) 35%, transparent); }
+.wrap.sidebar .dev-badge.medium { color: color-mix(in srgb, currentColor 70%, transparent); background: color-mix(in srgb, currentColor 9%, transparent); border: 1px solid color-mix(in srgb, currentColor 22%, transparent); }
+.wrap.sidebar .dev-badge.low { color: color-mix(in srgb, var(--warn) 75%, #000); background: color-mix(in srgb, var(--warn) 16%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); }
+:host([data-theme="dark"]) .wrap.sidebar .dev-badge.high { color: var(--blue); }
+:host([data-theme="dark"]) .wrap.sidebar .dev-badge.low { color: var(--warn); }
+:host([data-theme="dark"]) .wrap.sidebar .dev-badge.medium { color: color-mix(in srgb, currentColor 80%, transparent); }
 .sb-sub.sb-cols { display: grid; grid-template-columns: minmax(0, 1fr) 3em 3em 4.4em; column-gap: 8px; font-size: 12px; }
 .sb-sub.sb-cols .c { text-align: right; font-size: 11.5px; }
 .sb-sub { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12.5px; margin-top: 2px; }

@@ -5,11 +5,14 @@
 //   popup/options --chrome.runtime.sendMessage(UiRequest)--> sw.ts (responds via sendResponse)
 
 import type { AttributionView } from "./attribution";
+import type { DeviceView } from "./deviceAttribution";
+import type { SessionsDiag } from "../sync/sessions";
 import type {
   Aggregates,
   AccountUsage,
   CaptureDiag,
   SwDiag,
+  TrayDiag,
   UsageDiag,
   Source,
   CapturedEvent,
@@ -71,6 +74,8 @@ export interface WidgetState {
   limitHint: LimitHint | null;
   /** Per-model plan-limit points (estimates), account-wide. */
   attribution: AttributionView;
+  /** Per-device plan-limit points (estimates) for the 5h and weekly windows, account-wide; labels already resolved. */
+  devices: DeviceView;
   syncState: SyncState;
   showWidget: boolean;
   codeDeviceIds: string[];
@@ -112,8 +117,8 @@ export interface UiResponseData {
   "get-hub-devices": WidgetState["hub"];
   "test-connection": { reachable: boolean; detail: string };
   "sync-now": SyncState;
-  "get-diag": { page: CaptureDiag | null; sw: SwDiag; usage: UsageDiag | null };
-  "reset-diag": { page: CaptureDiag | null; sw: SwDiag; usage: UsageDiag | null };
+  "get-diag": { page: CaptureDiag | null; sw: SwDiag; usage: UsageDiag | null; tray: TrayDiag | null; sessions: SessionsDiag | null };
+  "reset-diag": { page: CaptureDiag | null; sw: SwDiag; usage: UsageDiag | null; tray: TrayDiag | null; sessions: SessionsDiag | null };
   "reset-attribution": null;
   "export-data": { json: string };
   "clear-data": UiState;

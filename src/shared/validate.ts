@@ -1,4 +1,4 @@
-import { HINT_MAX_KEYS, HINT_MAX_KEY_LEN, HINT_MAX_STR, type CaptureDiag, type CapturedEvent, type DiagObservation, type LimitHint } from "./types";
+import { HINT_MAX_KEYS, HINT_MAX_KEY_LEN, HINT_MAX_STR, type ApiShape, type ApiShapeObservation, type CaptureDiag, type CapturedEvent, type DiagObservation, type LimitHint } from "./types";
 import { NS, type PageMessage, type WidgetRequest } from "./messages";
 
 const STATUSES = ["ok", "error", "aborted"];
@@ -50,6 +50,43 @@ function validateObservation(x: unknown): DiagObservation | null {
   return o;
 }
 
+const LEAF_RE = /^(string|number|boolean|null|object|undefined|array\(\d+\)|unreadable)$/;
+
+/** Sanitises a shape: depth <= 3, <= 40 keys per level, every leaf a known type name. Bad leaves are dropped. */
+function cleanShape(x: unknown, depth: number): ApiShape | null {
+  if (!isObj(x) || depth > 3) return null;
+  const out: ApiShape = {};
+  let n = 0;
+  for (const [k, v] of Object.entries(x)) {
+    if (n >= 40) break;
+    if (k.length > 40) continue;
+    if (typeof v === "string") {
+      if (v.length > 20 || !LEAF_RE.test(v)) continue;
+      out[k] = v;
+    } else {
+      const sub = cleanShape(v, depth + 1);
+      if (!sub) continue;
+      out[k] = sub;
+    }
+    n++;
+  }
+  return out;
+}
+
+function validateApiShapes(x: unknown): ApiShapeObservation[] {
+  if (!Array.isArray(x)) return [];
+  const out: ApiShapeObservation[] = [];
+  for (const o of x.slice(0, 20)) {
+    if (!isObj(o)) continue;
+    const { at, method, pathPattern, status, shape, looksLikeSessionList } = o;
+    if (!num(at) || method !== "GET" || !text(pathPattern, 200) || !num(status) || !bool(looksLikeSessionList)) continue;
+    const clean = cleanShape(shape, 1);
+    if (!clean) continue;
+    out.push({ at, method, pathPattern, status, shape: clean, looksLikeSessionList });
+  }
+  return out;
+}
+
 export function validateDiag(x: unknown): CaptureDiag | null {
   if (!isObj(x)) return null;
   const { updatedAt, hookInstalled, fetchCalls, streamsSeen, emptyStreams, eventsPosted, observations } = x;
@@ -62,7 +99,8 @@ export function validateDiag(x: unknown): CaptureDiag | null {
     if (!v) return null;
     obs.push(v);
   }
-  return { updatedAt, hookInstalled, fetchCalls, streamsSeen, emptyStreams, eventsPosted, observations: obs };
+  const apiShapes = validateApiShapes(x.apiShapes);
+  return { updatedAt, hookInstalled, fetchCalls, streamsSeen, emptyStreams, eventsPosted, observations: obs, ...(apiShapes.length ? { apiShapes } : {}) };
 }
 
 export function validateHint(x: unknown): LimitHint | null {

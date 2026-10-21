@@ -1,5 +1,6 @@
 import { emptyLedger, normalizeLedger } from "./shared/attribution";
 import type { Ledger } from "./shared/attribution";
+import { emptyDeviceLedger, normalizeDeviceLedger, type DeviceLedger } from "./shared/deviceAttribution";
 import { DEFAULT_SETTINGS, DEFAULT_SW_DIAG, DEFAULT_SYNC_STATE, type DeviceInfo, type StorageShape } from "./shared/types";
 
 type Defaulted = Exclude<keyof StorageShape, "device">;
@@ -14,7 +15,13 @@ const DEFAULTS: { [K in Defaulted]: StorageShape[K] } = {
   captureDiag: null,
   swDiag: DEFAULT_SW_DIAG,
   usageDiag: null,
+  trayDiag: null,
   limitLedger: emptyLedger(),
+  deviceLedger: emptyDeviceLedger(),
+  sessionSalt: null,
+  sessions: {},
+  sessionsDiag: null,
+  currentSessionLabel: null,
 };
 
 /** Pre-pivot settings used deskbuddyUrl / sharedToken. Rename once, drop the old LAN default. */
@@ -54,6 +61,15 @@ export async function ensureDevice(): Promise<DeviceInfo> {
   return fresh;
 }
 
+/** Returns the random salt for session keys, creating it once. */
+export async function ensureSessionSalt(): Promise<string> {
+  const s = await get("sessionSalt");
+  if (typeof s === "string" && s) return s;
+  const fresh = crypto.randomUUID();
+  await set({ sessionSalt: fresh });
+  return fresh;
+}
+
 let ledgerChain: Promise<unknown> = Promise.resolve();
 /** Serialises read-modify-write on `limitLedger`. */
 export function mutateLedger(fn: (l: Ledger) => Ledger): Promise<Ledger> {
@@ -64,6 +80,19 @@ export function mutateLedger(fn: (l: Ledger) => Ledger): Promise<Ledger> {
     return next;
   });
   ledgerChain = run.catch(() => undefined);
+  return run;
+}
+
+let deviceLedgerChain: Promise<unknown> = Promise.resolve();
+/** Serialises read-modify-write on `deviceLedger`. */
+export function mutateDeviceLedger(fn: (l: DeviceLedger) => DeviceLedger): Promise<DeviceLedger> {
+  const run = deviceLedgerChain.then(async () => {
+    const cur = normalizeDeviceLedger(await get("deviceLedger"));
+    const next = fn(cur);
+    if (next !== cur) await set({ deviceLedger: next });
+    return next;
+  });
+  deviceLedgerChain = run.catch(() => undefined);
   return run;
 }
 

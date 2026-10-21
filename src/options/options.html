@@ -46,6 +46,8 @@
 
     <label class="check"><input id="poll" type="checkbox"> <span>Poll account usage</span></label>
 
+    <label class="check"><input id="readSessions" type="checkbox"> <span>Read the claude.ai devices list (Active sessions) to credit phones and other devices</span></label>
+
     <div class="row actions">
       <button id="save" type="submit" class="primary">Save</button>
       <button id="export" type="button">Export JSON</button>
@@ -61,6 +63,12 @@
     <table id="diagCounters" class="dtable"></table>
     <h3>Last /usage response (shape only)</h3>
     <div class="scroll"><table id="diagUsage" class="dtable"></table></div>
+    <h3>Devices list (Active sessions)</h3>
+    <div class="scroll"><table id="diagSessions" class="dtable"></table></div>
+    <h3>API calls seen for the devices list</h3>
+    <p class="small">Key names and value types only, never values. Used to find how the settings page lists your devices.</p>
+    <div class="scroll"><table id="diagShapes" class="dtable"></table></div>
+    <div id="diagShapeList"></div>
     <h3>Recent API responses</h3>
     <div class="scroll"><table id="diagObs" class="dtable"></table></div>
     <div class="row actions">

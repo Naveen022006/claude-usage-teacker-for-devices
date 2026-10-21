@@ -1,13 +1,16 @@
 // Pure helpers for the in-page widget (tested in test/widget.test.ts). No DOM, no chrome.*.
 
+import type { DeviceView, DeviceWindowView } from "../shared/deviceAttribution";
 import type { HubDevice } from "../shared/messages";
 import type { AccountWindow, Aggregates, Source, WindowAggregate, WindowName } from "../shared/types";
 
-export type TabId = "session" | "today" | "week";
+export type TabId = "session" | "today" | "week" | "devices";
 export const TABS: { id: TabId; label: string; window: WindowName }[] = [
   { id: "session", label: "Session (5h)", window: "last5h" },
   { id: "today", label: "Today", window: "today" },
   { id: "week", label: "7 days", window: "last7d" },
+  // "devices" is a different view (per-device plan points); its `window` only keeps TabId -> aggregate lookups safe.
+  { id: "devices", label: "Devices", window: "last5h" },
 ];
 
 export type Tone = "ok" | "warn" | "bad";
@@ -30,6 +33,7 @@ const WINDOW_LABELS: Record<string, string> = {
   seven_day: "Weekly · all models",
   seven_day_opus: "Weekly · Opus",
   seven_day_sonnet: "Weekly · Sonnet",
+  seven_day_fable: "Weekly · Fable",
 };
 
 export function humanizeWindow(name: string): string {
@@ -535,4 +539,105 @@ export function attributionRows(
   const other = mk("Other", five?.other ?? 0, week?.other ?? 0, 0, "Other devices, mobile, and usage from before tracking started. ");
   other.title = `Other · ${other.five} of the 5h limit · ${other.week} of the weekly limit. Other devices, mobile, and usage from before tracking started. ${EXPLAIN}`;
   return { rows, other };
+}
+
+// ---- per-device plan-limit points (Devices view) ----
+
+export interface DeviceRowView {
+  key: string;
+  label: string;
+  pts: string; // "9.0% of limit"
+  share: string; // "56% of used"
+  bar: number; // 0-100
+  badge: "High" | "Medium" | "Low" | null; // null for the Unattributed row
+  title: string;
+  unattributed: boolean;
+  /** mostly an estimate of activity before tracking started */
+  estimated: boolean;
+  /** muted explanation under the row (waiting for the % to move / nothing yet), else null */
+  note: string | null;
+}
+
+export interface DeviceSectionView {
+  name: "five_hour" | "seven_day";
+  heading: string; // "5-hour" | "Weekly"
+  resetsAt: string | null;
+  total: string; // "Total 15% used"
+  since: string | null; // "Tracking since 10:42"
+  rows: DeviceRowView[];
+  breakdown?: BreakdownView | null; // Weekly section only
+}
+
+export interface BreakdownRowView { key: string; name: string; value: string; bar: number }
+export interface BreakdownView { heading: string; rows: BreakdownRowView[]; caption: string }
+export const BREAKDOWN_HEADING = "Claude's weekly breakdown";
+
+/** Claude's official weekly breakdown (no confidence badge). null when absent. */
+export function breakdownView(b: { asOf?: string; rows: { key: string; name: string; percent: number }[] } | null | undefined): BreakdownView | null {
+  if (!b || !Array.isArray(b.rows) || !b.rows.length) return null;
+  const rows = b.rows.map((r) => ({ key: r.key, name: r.name, value: `${fmtNum(r.percent)}%`, bar: clampPct(r.percent) }));
+  const t = typeof b.asOf === "string" ? Date.parse(b.asOf) : NaN;
+  const time = Number.isFinite(t) ? new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : null;
+  return { heading: BREAKDOWN_HEADING, rows, caption: time ? `Reported by Claude · ${time}` : "Reported by Claude" };
+}
+
+export type DevicesPanelView = { kind: "empty"; message: string } | { kind: "ok"; sections: DeviceSectionView[] };
+
+export const DEVICES_UNATTRIBUTED_MIN = 0.05;
+export const DEVICES_FOOTER = "Estimates from usage changes and device activity. Anthropic does not publish per-device usage.";
+export const ESTIMATED_NOTE = "Estimated from activity before tracking started";
+const CONFIDENCE_TITLE = {
+  High: "High: only this device was active when usage rose.",
+  Medium: "Medium: only a sessions-list change (no direct count) showed this device was active.",
+  Low: "Low: several devices were active, so the rise was split by estimated cost.",
+} as const;
+const UNATTRIBUTED_TITLE = "Usage no device could be matched to: devices whose Updated time didn't change, and usage from before tracking started.";
+export const WAITING_NOTE = "Waiting for the usage % to move";
+export const NO_LOCAL_USAGE_NOTE = "No usage from this browser yet in this window";
+
+/** "Tracking since 10:42" (local time); with the date when it was not today. */
+export function formatTrackingSince(ts: number | undefined, now: number): string | null {
+  if (ts === undefined || !Number.isFinite(ts) || ts <= 0) return null;
+  const d = new Date(ts);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const sameDay = d.toDateString() === new Date(now).toDateString();
+  return `Tracking since ${sameDay ? time : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`}`;
+}
+
+const fmtNum = (x: number): string => { const v = Number.isFinite(x) && x > 0 ? x : 0; const r = Math.round(v * 10) / 10; return r < 10 ? r.toFixed(1) : String(Math.round(r)); };
+const fmtPts = (x: number): string => `${fmtNum(x)}% of limit`;
+const fmtShare = (pct: number): string => `${Math.round(pct)}% of used`;
+const sharePct = (pts: number, total: number): number => (total > 0 ? clampPct((pts / total) * 100) : 0);
+
+/** Display rows for one window: one per device (already sorted by the engine), then "Unattributed" when >= 0.05 pts. */
+export function deviceRowsFor(view: DeviceWindowView): DeviceRowView[] {
+  const rows: DeviceRowView[] = view.rows.map((r) => {
+    const badge = r.confidence === "low" ? "Low" : r.confidence === "medium" ? "Medium" : "High";
+    const share = sharePct(r.pts, view.totalPts);
+    return { key: r.key, label: r.label, pts: fmtPts(r.pts), share: fmtShare(share), bar: share, badge, title: `${r.label} · ${fmtPts(r.pts)} · ${r.estimated ? "Low: " + ESTIMATED_NOTE + ", split by recent activity." : CONFIDENCE_TITLE[badge]}`, unattributed: false, estimated: !!r.estimated, note: r.waiting ? WAITING_NOTE : r.estimated ? ESTIMATED_NOTE : r.key === "local" && !(r.pts >= DEVICES_UNATTRIBUTED_MIN) ? NO_LOCAL_USAGE_NOTE : null };
+  });
+  if (view.unattributedPts >= DEVICES_UNATTRIBUTED_MIN) {
+    const share = sharePct(view.unattributedPts, view.totalPts);
+    rows.push({ key: "unattributed", label: "Unattributed", pts: fmtPts(view.unattributedPts), share: fmtShare(share), bar: share, badge: null, title: UNATTRIBUTED_TITLE, unattributed: true, estimated: false, note: null });
+  }
+  return rows;
+}
+
+/** Everything the Devices tab renders (or the empty-state message). Never throws on partial data. */
+export function devicesPanel(
+  devices: DeviceView | undefined,
+  acct: { windows: AccountWindow[]; breakdown?: { asOf?: string; rows: { key: string; name: string; percent: number }[] } } | null | undefined,
+  plan: string | null | undefined,
+  now: number = Date.now(),
+): DevicesPanelView {
+  const sections: DeviceSectionView[] = [];
+  for (const [name, heading] of [["five_hour", "5-hour"], ["seven_day", "Weekly"]] as const) {
+    const v = devices?.[name];
+    if (!v) continue;
+    const resetsAt = acct?.windows?.find((w) => w.name === name)?.resetsAt ?? (Number.isFinite(Date.parse(v.cycle)) ? v.cycle : null);
+    sections.push({ name, heading, resetsAt, total: `Total ${fmtNum(v.totalPts)}% used`, since: formatTrackingSince(v.trackingSince, now), rows: deviceRowsFor(v), breakdown: name === "seven_day" ? breakdownView(acct?.breakdown) : null });
+  }
+  if (sections.length) return { kind: "ok", sections };
+  if (plan === "free" && !acct?.windows?.length) return { kind: "empty", message: "Per-device usage needs a Pro/Max plan usage reading." };
+  return { kind: "empty", message: "Waiting for your plan usage reading…" };
 }

@@ -2,7 +2,9 @@
 // the SW may be killed at any time, which is fine because every report is a full snapshot.
 
 import { clampCharsPerToken, estimateTokens } from "./capture/tokens";
-import { addContribution, applyReading, attributionView, emptyLedger, normalizeLedger, recordHubSnapshot, replyWeight } from "./shared/attribution";
+import { type AttrWindow, addContribution, applyReading, attributionView, emptyLedger, normalizeLedger, recordHubSnapshot, replyWeight } from "./shared/attribution";
+import { routeMessage } from "./shared/route";
+import { addDeviceContribution, applyReadingWithSessions, baselineWeights, deviceView, emptyDeviceLedger, LOCAL_KEY, normalizeDeviceLedger, recordHubDevices } from "./shared/deviceAttribution";
 import { computeAggregates, pruneEvents } from "./shared/aggregate";
 import {
   NS,
@@ -14,15 +16,21 @@ import {
   type UiState,
   type WidgetState,
 } from "./shared/messages";
-import { DEFAULT_SW_DIAG, DEFAULT_SYNC_STATE, type SwDiag, type UsageDiag, type Settings, type SyncState, type UsageEvent } from "./shared/types";
+import { DEFAULT_SW_DIAG, DEFAULT_SYNC_STATE, type SwDiag, type TrayDiag, type UsageDiag, type Settings, type SyncState, type UsageEvent } from "./shared/types";
 import { pickOrg, planOfOrgs } from "./shared/org";
 import { explainCapturedEventError, sanitizeDeviceIds, validatePageMessage, validateWidgetRequest } from "./shared/validate";
+import * as history from "./history";
 import * as store from "./storage";
 import { fetchAccountUsage } from "./sync/accountUsage";
+import { fetchSessions } from "./sync/sessions";
+import { sessionKey } from "./capture/sessionsParser";
+import { diffSessions } from "./shared/sessionsStore";
+import { nextBackoffMs, orgHash } from "./sync/backoff";
 import { buildReport, fetchHubState, normalizeBase, ping, sendReport } from "./sync/hub";
 
 const HEARTBEAT = "heartbeat";
 const SYNC_DEBOUNCE_MS = 3000;
+const USAGE_POLL_NO_TAB_MS = 3 * 60_000;
 const USAGE_POLL_MS = 55_000; // heartbeat is 1 min, so effectively every 1-2 min while a claude.ai tab is open
 const READING_DELAYS_MS = [4_000, 20_000]; // extra account-usage readings after each reply
 
@@ -47,6 +55,8 @@ async function heartbeat(): Promise<void> {
   } catch (e) {
     console.warn("[claude-usage] usage poll failed", e);
   }
+  // Keep the tray current even when no new reading was taken this minute (it marks stale data by age).
+  void store.get("accountUsage").then(pushToTray, () => {});
   await syncNow();
 }
 
@@ -54,29 +64,130 @@ const recordUsageDiag = (d: UsageDiag): void => {
   void store.set({ usageDiag: d }).catch(() => {});
 };
 
+// Back-off for every /usage read (heartbeat poll, post-reply readings, widget refresh). Module memory only:
+// a SW restart resets it, which is acceptable.
+let usageFailures = 0;
+let usageBackoffUntil = 0;
+
+/** Reads /usage unless backing off after consecutive failures (2, 4, 8, then 15 min); a 200 resets it. */
+async function readUsage(orgId: string): Promise<NonNullable<WidgetState["accountUsage"]> | null> {
+  if (Date.now() < usageBackoffUntil) return null;
+  return fetchAccountUsage(orgId, (d) => {
+    recordUsageDiag(d);
+    if (d.status === 200) usageFailures = usageBackoffUntil = 0;
+    else usageBackoffUntil = Date.now() + nextBackoffMs(++usageFailures);
+  });
+}
+
 async function pollAccountUsage(): Promise<void> {
   const [settings, orgId, current] = await Promise.all([
     store.get("settings"),
     store.get("orgId"),
     store.get("accountUsage"),
   ]);
-  if (!settings.pollAccountUsage || !orgId) return;
+  if (!settings.pollAccountUsage) return;
   const now = Date.now();
-  if (now - Math.max(current?.fetchedAt ?? 0, lastUsageAttempt) < USAGE_POLL_MS) return;
+  // With a claude.ai tab open poll every ~1 min; otherwise every 3 min (the Usage Meter tray still needs it).
   const tabs = await chrome.tabs.query({ url: "https://claude.ai/*" });
-  if (!tabs.length) return;
+  const gap = tabs.length ? USAGE_POLL_MS : USAGE_POLL_NO_TAB_MS;
+  if (now - Math.max(current?.fetchedAt ?? 0, lastUsageAttempt) < gap) return;
+  let org = orgId;
+  if (!org) {
+    org = await discoverOrgId(undefined); // uses the claude.ai sign-in cookie; rate-limited
+    if (!org) return;
+    await store.set({ orgId: org });
+  }
   lastUsageAttempt = now;
-  const usage = await fetchAccountUsage(orgId, recordUsageDiag);
+  const usage = await readUsage(org);
   if (usage) await storeUsage(usage);
+}
+
+// ---- Usage Meter (Windows tray app on this PC) ----
+// The tray shows the plan limits of the Claude account used in Claude Desktop. Claude Desktop never exposes its
+// sign-in, so this extension (signed in to the same account on claude.ai) hands its readings to the tray over
+// localhost. Only plan %, reset times, plan name and a hash of the org id are sent — no tokens, cookies or message text.
+const TRAY_URL = "http://127.0.0.1:47823/api/local-account";
+async function pushToTray(usage: WidgetState["accountUsage"]): Promise<void> {
+  const note = (d: Omit<TrayDiag, "at">) => void store.set({ trayDiag: { at: Date.now(), ...d } }).catch(() => {});
+  if (!usage) return note({ status: null, note: "no plan usage read from claude.ai yet" });
+  try {
+    const [orgId, plan] = await Promise.all([store.get("orgId"), store.get("plan")]);
+    const res = await fetch(TRAY_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ v: 1, orgId: await orgHash(orgId), plan, usage: { fetchedAt: usage.fetchedAt, windows: usage.windows } }), // breakdown stays local
+      signal: AbortSignal.timeout(3000),
+    });
+    note({ status: res.status });
+  } catch (e) {
+    // Tray not running is fine; the note says so in Diagnostics.
+    note({ status: null, note: e instanceof Error ? `${e.name}: ${e.message}`.slice(0, 160) : "unreachable" });
+  }
+}
+
+// Sessions-list (devices) read: at most once per 50 s, 5 min back-off after a failure. Module memory only.
+const SESSIONS_MIN_GAP_MS = 50_000;
+const SESSIONS_BACKOFF_MS = 5 * 60_000;
+let lastSessionsRead = 0;
+let sessionsBackoffUntil = 0;
+
+/** Reads the devices list when due; returns session keys whose Updated moved and key -> label for other sessions. */
+async function readSessionsEvidence(now: number): Promise<{ changed: string[]; names: Record<string, string> }> {
+  const none = { changed: [] as string[], names: {} as Record<string, string> };
+  try {
+    const settings = await store.get("settings");
+    if (!settings.readSessions || now - lastSessionsRead < SESSIONS_MIN_GAP_MS || now < sessionsBackoffUntil) return none;
+    lastSessionsRead = now;
+    const parsed = await fetchSessions((d) => void store.set({ sessionsDiag: d }).catch(() => {}));
+    if (!parsed) {
+      sessionsBackoffUntil = now + SESSIONS_BACKOFF_MS;
+      return none;
+    }
+    const salt = await store.ensureSessionSalt();
+    const next = await Promise.all(parsed.sessions.map(async (s) => ({ key: await sessionKey(salt, s), s })));
+    const { store: sessions, changed } = diffSessions(await store.get("sessions"), next, now);
+    const cur = next.find((n) => n.s.isCurrent);
+    await store.set({ sessions, currentSessionLabel: cur ? cur.s.label : await store.get("currentSessionLabel") });
+    const names: Record<string, string> = {};
+    for (const n of next) if (!n.s.isCurrent) names[n.key] = n.s.label;
+    return { changed, names };
+  } catch (e) {
+    console.warn("[claude-usage] sessions read failed", e);
+    sessionsBackoffUntil = now + SESSIONS_BACKOFF_MS;
+    return none;
+  }
 }
 
 /** Stores a fresh account-usage reading and feeds it to the per-model attribution ledger. */
 async function storeUsage(usage: NonNullable<WidgetState["accountUsage"]>): Promise<void> {
   await store.set({ accountUsage: usage });
+  void pushToTray(usage);
+  void Promise.all([store.ensureDevice(), store.get("plan")]).then(
+    ([device, plan]) => history.appendReading(usage, device.deviceId, plan),
+    () => {},
+  );
   try {
     await store.mutateLedger((l) => applyReading(l, usage, usage.fetchedAt));
   } catch (e) {
     console.warn("[claude-usage] attribution failed", e);
+  }
+  try {
+    const now = Date.now();
+    const { changed, names } = await readSessionsEvidence(now);
+    const [events, sessions, device] = await Promise.all([store.get("events"), store.get("sessions"), store.ensureDevice()]);
+    const hubDevices = hubCache?.result.ok
+      ? hubCache.result.devices.map((d) => ({
+          deviceId: d.deviceId,
+          source: d.source,
+          last5hByModel: Object.fromEntries(Object.entries(d.windows.last5h.byModel).map(([m, v]) => [m, v.tokens])),
+          last7dByModel: Object.fromEntries(Object.entries(d.windows.last7d.byModel).map(([m, v]) => [m, v.tokens])),
+        }))
+      : [];
+    const baseline = (window: AttrWindow, cycleStartMs: number) =>
+      baselineWeights({ events, ownDeviceId: device.deviceId, hubDevices, sessions, window, cycleStartMs, now });
+    await store.mutateDeviceLedger((dl) => applyReadingWithSessions(dl, usage, changed, names, now, baseline));
+  } catch (e) {
+    console.warn("[claude-usage] device attribution failed", e);
   }
 }
 
@@ -93,7 +204,7 @@ async function readingNow(): Promise<void> {
   const tabs = await chrome.tabs.query({ url: "https://claude.ai/*" });
   if (!tabs.length) return;
   lastUsageAttempt = Date.now();
-  const usage = await fetchAccountUsage(orgId, recordUsageDiag);
+  const usage = await readUsage(orgId);
   if (usage) {
     await storeUsage(usage);
     void broadcastStateChanged();
@@ -103,26 +214,25 @@ async function readingNow(): Promise<void> {
 // ---- messages ----
 
 chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
-  if (sender.tab) {
-    if (sender.url?.startsWith("https://claude.ai/") && sender.id === chrome.runtime.id) {
-      // The widget (ISOLATED content script) is the only content script that gets a response.
-      const w = validateWidgetRequest(msg);
-      if (w) {
-        handleWidget(w.type, w.type === "get-widget-state" ? w.orgHint : undefined).then(sendResponse, (e) =>
-          sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }),
-        );
-        return true;
-      }
-      const m = validatePageMessage(msg);
-      if (m) void handlePage(m).catch((e) => console.warn("[claude-usage] page message failed", e));
-      else if ((msg as { type?: unknown } | null)?.type === "usage-event") {
-        const reason = explainCapturedEventError((msg as { payload?: unknown }).payload) ?? "invalid message";
-        void bumpSwDiag({ eventsReceived: 1, eventsRejected: 1 }, reason).catch(() => {});
-      }
+  const route = routeMessage(sender, chrome.runtime.id, chrome.runtime.getURL(""));
+  if (route === "ignore") return false;
+  if (route === "content") {
+    // The widget (ISOLATED content script) is the only content script that gets a response.
+    const w = validateWidgetRequest(msg);
+    if (w) {
+      handleWidget(w.type, w.type === "get-widget-state" ? w.orgHint : undefined).then(sendResponse, (e) =>
+        sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }),
+      );
+      return true;
+    }
+    const m = validatePageMessage(msg);
+    if (m) void handlePage(m).catch((e) => console.warn("[claude-usage] page message failed", e));
+    else if ((msg as { type?: unknown } | null)?.type === "usage-event") {
+      const reason = explainCapturedEventError((msg as { payload?: unknown }).payload) ?? "invalid message";
+      void bumpSwDiag({ eventsReceived: 1, eventsRejected: 1 }, reason).catch(() => {});
     }
     return false;
   }
-  if (sender.id !== chrome.runtime.id) return false;
   handleUi(msg as UiRequest).then(sendResponse, (e) =>
     sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }),
   );
@@ -187,6 +297,7 @@ async function handlePage(m: PageMessage): Promise<void> {
         try {
           const w = replyWeight(ev.model, ev.promptTokens, ev.outputTokens);
           await store.mutateLedger((l) => addContribution(l, { model: ev.model, weight: w, ts: Date.now(), source: "chrome" }));
+          await store.mutateDeviceLedger((dl) => addDeviceContribution(dl, LOCAL_KEY, w, Date.now()));
           scheduleReadings();
         } catch (e) {
           console.warn("[claude-usage] attribution contribution failed", e);
@@ -246,6 +357,19 @@ async function recordHub(devices: HubStateResult["devices"]): Promise<void> {
   } catch (e) {
     console.warn("[claude-usage] hub attribution failed", e);
   }
+  try {
+    // Same snapshot, per device. This browser is skipped here: its replies are recorded locally under LOCAL_KEY.
+    const selfId = (await store.ensureDevice()).deviceId;
+    const lite = devices.map((d) => ({
+      deviceId: d.deviceId,
+      source: d.source,
+      deviceName: d.deviceName,
+      last5hByModel: Object.fromEntries(Object.entries(d.windows.last5h.byModel).map(([m, v]) => [m, v.tokens])),
+    }));
+    await store.mutateDeviceLedger((dl) => recordHubDevices(dl, lite, Date.now(), selfId));
+  } catch (e) {
+    console.warn("[claude-usage] hub device attribution failed", e);
+  }
 }
 
 async function getHubState(settings: Settings): Promise<WidgetState["hub"]> {
@@ -274,7 +398,7 @@ function maybeRefreshUsageForWidget(settings: Settings, orgId: string | null, us
   if (now - (usage?.fetchedAt ?? 0) < WIDGET_USAGE_STALE_MS) return;
   if (now - lastWidgetUsageAttempt < WIDGET_USAGE_MIN_GAP_MS) return;
   lastUsageAttempt = lastWidgetUsageAttempt = now;
-  void fetchAccountUsage(orgId, recordUsageDiag)
+  void readUsage(orgId)
     .then(async (u) => {
       if (u) {
         await storeUsage(u);
@@ -340,13 +464,26 @@ async function discoverOrgId(hint: string | undefined): Promise<string | null> {
   }
 }
 
+/** Display names for device-ledger keys: this browser, and each hub device by its reported name. */
+function deviceLabels(
+  ownName: string,
+  hubDevices: HubStateResult["devices"],
+  sessions: Record<string, { label: string }> = {},
+  currentSessionLabel: string | null = null,
+): Record<string, string> {
+  const labels: Record<string, string> = { [LOCAL_KEY]: `${currentSessionLabel ?? ownName} · this browser` };
+  for (const [k, s] of Object.entries(sessions)) if (k !== LOCAL_KEY && typeof s?.label === "string") labels[k] = s.label;
+  for (const d of hubDevices) labels["hub:" + d.deviceId] = d.deviceName || "Other device";
+  return labels;
+}
+
 async function handleWidget(type: "get-widget-state" | "open-options", orgHint?: string): Promise<UiResponse> {
   try {
     if (type === "open-options") {
       await chrome.runtime.openOptionsPage();
       return { ok: true, data: null };
     }
-    const [device, settings, syncState, accountUsage, events, orgId, captureDiag, swDiag, limitHint, ledger] = await Promise.all([
+    const [device, settings, syncState, accountUsage, events, orgId, captureDiag, swDiag, limitHint, ledger, deviceLedger, sessions, currentSessionLabel] = await Promise.all([
       store.ensureDevice(),
       store.get("settings"),
       store.get("syncState"),
@@ -357,6 +494,9 @@ async function handleWidget(type: "get-widget-state" | "open-options", orgHint?:
       store.get("swDiag"),
       store.get("limitHint"),
       store.get("limitLedger"),
+      store.get("deviceLedger"),
+      store.get("sessions"),
+      store.get("currentSessionLabel"),
     ]);
     let org = orgId;
     let learned = false;
@@ -381,6 +521,7 @@ async function handleWidget(type: "get-widget-state" | "open-options", orgHint?:
       aggregates: computeAggregates(events, now),
       accountUsage,
       attribution: attributionView(normalizeLedger(ledger)),
+      devices: deviceView(normalizeDeviceLedger(deviceLedger), deviceLabels(device.deviceName, hub.devices, sessions, currentSessionLabel)),
       plan,
       limitHint,
       syncState,
@@ -489,6 +630,7 @@ async function handleUi(req: UiRequest): Promise<UiResponse> {
         if (p.charsPerToken !== undefined) next.charsPerToken = clampCharsPerToken(p.charsPerToken);
         if (typeof p.hubToken === "string") next.hubToken = p.hubToken.slice(0, 200);
         if (typeof p.pollAccountUsage === "boolean") next.pollAccountUsage = p.pollAccountUsage;
+        if (typeof p.readSessions === "boolean") next.readSessions = p.readSessions;
         if (typeof p.showWidget === "boolean") next.showWidget = p.showWidget;
         const ids = sanitizeDeviceIds(p.codeDeviceIds);
         if (ids) next.codeDeviceIds = ids;
@@ -517,13 +659,14 @@ async function handleUi(req: UiRequest): Promise<UiResponse> {
         return ok<"sync-now">(await syncNow());
       }
       case "get-diag":
-        return ok<"get-diag">({ page: await store.get("captureDiag"), sw: await store.get("swDiag"), usage: await store.get("usageDiag") });
+        return ok<"get-diag">({ page: await store.get("captureDiag"), sw: await store.get("swDiag"), usage: await store.get("usageDiag"), tray: await store.get("trayDiag"), sessions: await store.get("sessionsDiag") });
       case "reset-diag":
         await swDiagChain;
-        await store.set({ captureDiag: null, swDiag: { ...DEFAULT_SW_DIAG }, usageDiag: null });
-        return ok<"reset-diag">({ page: null, sw: { ...DEFAULT_SW_DIAG }, usage: null });
+        await store.set({ captureDiag: null, swDiag: { ...DEFAULT_SW_DIAG }, usageDiag: null, trayDiag: null, sessionsDiag: null });
+        return ok<"reset-diag">({ page: null, sw: { ...DEFAULT_SW_DIAG }, usage: null, tray: null, sessions: null });
       case "reset-attribution":
         await store.mutateLedger(() => emptyLedger());
+        await store.mutateDeviceLedger(() => emptyDeviceLedger());
         void broadcastStateChanged();
         return ok<"reset-attribution">(null);
       case "export-data": {
@@ -539,7 +682,9 @@ async function handleUi(req: UiRequest): Promise<UiResponse> {
       case "clear-data": {
         await store.mutateEvents(() => []);
         await store.mutateLedger(() => emptyLedger());
-        await store.set({ accountUsage: null, limitHint: null, syncState: { ...DEFAULT_SYNC_STATE } });
+        await store.mutateDeviceLedger(() => emptyDeviceLedger());
+        await history.clearHistory();
+        await store.set({ accountUsage: null, limitHint: null, syncState: { ...DEFAULT_SYNC_STATE }, sessions: {}, sessionsDiag: null, currentSessionLabel: null });
         return ok<"clear-data">(await buildState());
       }
       default:

@@ -2,6 +2,9 @@
 // Nothing in here may ever hold message text.
 
 import type { Ledger } from "./attribution";
+import type { DeviceLedger } from "./deviceAttribution";
+import type { SessionsDiag } from "../sync/sessions";
+import type { StoredSession } from "./sessionsStore";
 
 export type Source = "chrome" | "claude-code" | "desktop";
 export type EventStatus = "ok" | "error" | "aborted";
@@ -48,9 +51,18 @@ export interface AccountWindow {
   resetsAt?: string; // ISO string
 }
 
+/** Claude's own breakdown of the weekly usage (`seven_day_breakdown`). Percent is shown as reported. */
+export interface UsageBreakdown {
+  asOf?: string;
+  windowStartedAt?: string;
+  rows: { key: string; name: string; percent: number }[];
+}
+
 export interface AccountUsage {
   fetchedAt: number;
   windows: AccountWindow[];
+  /** Local only: stripped before sending to the hub or the tray. */
+  breakdown?: UsageBreakdown;
 }
 
 /** Claude subscription plan, derived from /api/organizations capabilities. */
@@ -79,6 +91,7 @@ export interface Settings {
   charsPerToken: number; // 2.5–5, default 3.6
   hubToken: string; // sent as "Authorization: Bearer <token>" when non-empty
   pollAccountUsage: boolean;
+  readSessions: boolean; // read the claude.ai devices list (Active sessions) to credit phones and other devices
   showWidget: boolean; // in-page widget on claude.ai
   codeDeviceIds: string[]; // hub devices counted as "Claude Code on this computer"; [] = auto (all claude-code/desktop)
 }
@@ -89,6 +102,7 @@ export const DEFAULT_SETTINGS: Settings = {
   charsPerToken: 3.6,
   hubToken: "",
   pollAccountUsage: true,
+  readSessions: true,
   showWidget: true,
   codeDeviceIds: [],
 };
@@ -135,7 +149,17 @@ export interface StorageShape {
   captureDiag: CaptureDiag | null;
   swDiag: SwDiag;
   usageDiag: UsageDiag | null;
+  trayDiag: TrayDiag | null;
   limitLedger: Ledger;
+  /** per-device plan-limit attribution (deviceAttribution.ts) */
+  deviceLedger: DeviceLedger;
+  /** random salt for hashing session keys; generated once, never leaves the browser */
+  sessionSalt: string | null;
+  /** devices-list sessions by salted key (coarse label + timestamps only) */
+  sessions: Record<string, StoredSession>;
+  sessionsDiag: SessionsDiag | null;
+  /** label of the session flagged is_current (this browser), used for the local row label */
+  currentSessionLabel: string | null;
 }
 
 /** POST /api/report body — docs/04-device-sync.md. Keep `v` versioned. */
@@ -171,6 +195,21 @@ export interface CaptureDiag {
   emptyStreams: number;
   eventsPosted: number;
   observations: DiagObservation[];
+  /** Shapes of JSON API responses seen on claude.ai settings pages (key names and value types only). */
+  apiShapes?: ApiShapeObservation[];
+}
+
+/** Key names mapped to type names or nested shapes. Never holds values. */
+export type ApiShape = { [key: string]: string | ApiShape };
+
+/** One JSON GET response seen on a settings page: redacted path and SHAPE only. */
+export interface ApiShapeObservation {
+  at: number;
+  method: string;
+  pathPattern: string;
+  status: number;
+  shape: ApiShape;
+  looksLikeSessionList: boolean;
 }
 
 /** Service-worker-side counters, stored as `swDiag`. */
@@ -182,6 +221,13 @@ export interface SwDiag {
 }
 
 export const DEFAULT_SW_DIAG: SwDiag = { eventsReceived: 0, eventsRejected: 0, lastRejectReason: null, eventsStored: 0 };
+
+/** Last hand-off of plan usage to the Usage Meter tray on this PC, stored as `trayDiag`. */
+export interface TrayDiag {
+  at: number;
+  status: number | null; // HTTP status from the tray, null = not sent or unreachable
+  note?: string; // why nothing was sent, or the network error
+}
 
 /** Shape (never values) of the last /usage response, stored as `usageDiag`. */
 export interface UsageDiag {

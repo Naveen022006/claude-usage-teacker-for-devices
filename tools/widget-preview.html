@@ -10,6 +10,7 @@
     ?pinned=1                  code mode with a Pinned section
     ?extra=1                   also show Weekly Opus / Weekly Sonnet (high-usage colours)
     ?plan=free|pro|max|team    plan badge; plan=free drops the account usage windows (Free has no usage endpoint)
+    (Devices view: click "Devices" in the panel; the tab cannot be preselected because the widget lives in a closed shadow root)
     ?hint=none|within|approaching|exceeded|windows   message_limit hint mock (use with plan=free; none = no hint yet)
 -->
 <style>
@@ -78,8 +79,20 @@
         { name: "five_hour", utilization: 79, resetsAt: new Date(now + 295 * min + 20000).toISOString() },
         { name: "seven_day", utilization: 11, resetsAt: new Date(now + 3 * 86400000 + 20000).toISOString() } ].concat(q.get("extra") === "1" ? [
         { name: "seven_day_opus", utilization: 92, resetsAt: new Date(now + 2 * 86400000).toISOString() },
-        { name: "seven_day_sonnet", utilization: 83, resetsAt: new Date(now + 5 * 86400000).toISOString() } ] : []) },
+        { name: "seven_day_sonnet", utilization: 83, resetsAt: new Date(now + 5 * 86400000).toISOString() } ] : []),
+        breakdown: { asOf: new Date(now - 4 * min).toISOString(), rows: [
+          { key: "chat", name: "Chat", percent: 12 }, { key: "claude_code", name: "Claude Code", percent: 9 },
+          { key: "cowork", name: "Cowork", percent: 3 }, { key: "other", name: "Other", percent: 1 } ] } },
       attribution: { five_hour: { byModel: { "claude-opus-4-5": 52, "claude-sonnet-5-5": 19 }, other: 8 }, seven_day: { byModel: { "claude-opus-4-5": 7, "claude-sonnet-5-5": 3 }, other: 1 } },
+      devices: { five_hour: { cycle: new Date(now + 295 * min).toISOString(), totalPts: 19, unattributedPts: 2, rows: [
+          { key: "local", label: "Chrome (this browser)", pts: 9, share: 0.6, confidence: "high", waiting: false },
+          { key: "hub:dk", label: "Claude Desktop (Windows)", pts: 4, share: 4 / 15, confidence: "low", waiting: true },
+          { key: "session:ios", label: "Claude (iOS)", pts: 1, share: 1 / 15, confidence: "medium", waiting: false },
+          { key: "session:ipad", label: "Claude (iPad)", pts: 3, share: 3 / 18, confidence: "low", waiting: false, estimated: true } ], trackingSince: now - 95 * min },
+        seven_day: { cycle: new Date(now + 3 * 86400000).toISOString(), totalPts: 11, unattributedPts: 1.5, rows: [
+          { key: "local", label: "Chrome (this browser)", pts: 6, share: 6 / 11, confidence: "high", waiting: false },
+          { key: "hub:dk", label: "Claude Desktop (Windows)", pts: 3.5, share: 3.5 / 11, confidence: "low", waiting: false },
+          { key: "session:ios", label: "Claude (iOS)", pts: 1, share: 1 / 11, confidence: "medium", waiting: false } ], trackingSince: now - 26 * 3600000 } },
       syncState: { lastOkAt: now - 20000, lastAttemptAt: now, lastError: null, queue: 0 }, showWidget: true, codeDeviceIds: [], now: now,
       captureDiag: { updatedAt: now, hookInstalled: true, fetchCalls: 42, streamsSeen: 3, emptyStreams: 0, eventsPosted: 0, observations: [{ at: now, pathPattern: "/api/organizations/:id/chat_conversations/:id/completion", contentType: "text/event-stream", status: 200, matchedRegex: true, eventTypes: ["message_start", "content_block_start", "content_block_delta", "message_delta", "message_stop"], recorded: false }] },
       swDiag: { eventsReceived: 0, eventsRejected: 0, lastRejectReason: null, eventsStored: 0 },

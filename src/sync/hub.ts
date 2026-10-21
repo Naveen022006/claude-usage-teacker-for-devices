@@ -26,7 +26,7 @@ export function buildReport(
     sentAt: now,
     windows: computeAggregates(events, now),
     estimated: opts.estimated,
-    account,
+    account: account ? { fetchedAt: account.fetchedAt, windows: account.windows } : null, // breakdown stays local
   };
 }
 

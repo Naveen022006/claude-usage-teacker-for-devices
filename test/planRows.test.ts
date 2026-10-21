@@ -25,6 +25,35 @@ describe("parseAccountUsage variants", () => {
   it("rate_limits array with 5h / 7d names", () => {
     expect(names({ rate_limits: [{ window: "5h", utilization: 30, resets_at: R }, { window: "7d", utilization: 40 }] })).toEqual([["five_hour", 30], ["seven_day", 40]]);
   });
+  it("limits list with kind / percent / scope.model", () => {
+    const j = {
+      five_hour: null,
+      seven_day: null,
+      limits: [
+        { kind: "session", percent: 42, resets_at: R },
+        { kind: "weekly_all", percent: 11, resets_at: R },
+        { kind: "weekly_scoped", percent: 7, resets_at: R, scope: { model: { display_name: "Opus" } } },
+        { kind: "weekly_scoped", percent: 3, scope: { model: { display_name: "Fable" } } },
+      ],
+    };
+    expect(parseAccountUsage(j, NOW)?.windows).toEqual([
+      { name: "five_hour", utilization: 42, resetsAt: R },
+      { name: "seven_day", utilization: 11, resetsAt: R },
+      { name: "seven_day_opus", utilization: 7, resetsAt: R },
+      { name: "seven_day_fable", utilization: 3 },
+    ]);
+  });
+  it("limits list wins over the older top-level fields; scoped limit without a model is skipped", () => {
+    const j = {
+      five_hour: { utilization: 99, resets_at: R },
+      seven_day_sonnet: { utilization: 5 },
+      limits: [{ kind: "session", percent: 40, id: "x1" }, { kind: "weekly_scoped", percent: 9, scope: {} }],
+    };
+    expect(names(j)).toEqual([["five_hour", 40], ["seven_day_sonnet", 5]]);
+  });
+  it("empty limits list (free plan) falls back to null", () => {
+    expect(parseAccountUsage({ five_hour: null, seven_day: null, limits: [] }, NOW)).toBeNull();
+  });
   it("0-1 fractions become percentages; 0-100 untouched", () => {
     expect(names({ five_hour: { utilization: 0.42 }, seven_day: { utilization: 1 } })).toEqual([["five_hour", 42], ["seven_day", 100]]);
     expect(names({ five_hour: { utilization: 1 }, seven_day: { utilization: 55 } })).toEqual([["five_hour", 1], ["seven_day", 55]]);
@@ -38,6 +67,9 @@ describe("parseAccountUsage variants", () => {
     const s = describeShape({ five_hour: { utilization: 3, resets_at: "secret" }, x: null, rate_limits: [{ window: "5h" }] });
     expect(s).toEqual({ five_hour: { utilization: "number", resets_at: "string" }, x: "null", rate_limits: { "(array)": "array(1)", window: "string" } });
     expect(JSON.stringify(s)).not.toContain("secret");
+    const n = describeShape({ seven_day_breakdown: { rows: [{ model: "secretmodel", pct: 3 }, { model: "b" }], total: 1 } });
+    expect(n).toEqual({ seven_day_breakdown: { rows: "array(2)", "rows[0].model": "string", "rows[0].pct": "number", total: "number" } });
+    expect(JSON.stringify(n)).not.toContain("secretmodel");
   });
 });
 
@@ -80,5 +112,24 @@ describe("modelRowView", () => {
     const m = modelShares({ "claude-sonnet-5-5": { messages: 14, tokens: 6100 }, "claude-haiku-4-5": { messages: 5, tokens: 2700 } })[0];
     expect(modelRowView(m, true).title).toBe("Sonnet 5.5 · 69% of this device's tokens · 14 msgs · ≈6.1k tok");
     expect(modelRowView(m, false).right).toBe("6.1k tok");
+  });
+});
+
+describe("seven_day_breakdown", () => {
+  const base = { five_hour: { utilization: 2, resets_at: R } };
+  const bd = (rows: unknown[], extra: object = {}) => ({ ...base, seven_day_breakdown: { as_of: "2026-10-16T11:56:00Z", window_started_at: "2026-10-12T00:00:00Z", rows, ...extra } });
+  it("reads valid rows, trims names, clamps percent", () => {
+    const b = parseAccountUsage(bd([{ key: "lorem", display_name: "  Lorem ", percent: 12.5 }, { key: "ipsum", display_name: "Ipsum", percent: 250 }]), NOW)?.breakdown;
+    expect(b).toEqual({ asOf: "2026-10-16T11:56:00Z", windowStartedAt: "2026-10-12T00:00:00Z", rows: [{ key: "lorem", name: "Lorem", percent: 12.5 }, { key: "ipsum", name: "Ipsum", percent: 100 }] });
+  });
+  it("skips invalid rows, caps at 12, omits when none valid", () => {
+    const bad = [{ key: 1, display_name: "A", percent: 1 }, { key: "k", display_name: "  ", percent: 1 }, { key: "k", display_name: "A", percent: -1 }, { key: "k", display_name: "A", percent: NaN }, { key: "k", display_name: "x".repeat(41), percent: 1 }, null, "x"];
+    expect(parseAccountUsage(bd(bad), NOW)?.breakdown).toBeUndefined();
+    expect("breakdown" in parseAccountUsage(bd(bad), NOW)!).toBe(false);
+    const many = Array.from({ length: 20 }, (_, i) => ({ key: `k${i}`, display_name: `N${i}`, percent: i }));
+    expect(parseAccountUsage(bd(many), NOW)?.breakdown?.rows).toHaveLength(12);
+  });
+  it("never throws on junk", () => {
+    for (const j of [null, "x", 5, [], { ...base, seven_day_breakdown: 5 }, { ...base, seven_day_breakdown: { rows: "x" } }]) expect(() => parseAccountUsage(j, NOW)).not.toThrow();
   });
 });

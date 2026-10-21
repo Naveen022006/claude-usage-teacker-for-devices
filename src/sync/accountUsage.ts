@@ -1,7 +1,7 @@
 // WARNING: this endpoint is UNDOCUMENTED and may change or vanish at any time.
 // The response shape is unverified (and differs by plan), so parsing is defensive and fails soft (null).
 
-import type { AccountUsage, AccountWindow, UsageDiag } from "../shared/types";
+import type { AccountUsage, AccountWindow, UsageBreakdown, UsageDiag } from "../shared/types";
 import { toIso } from "../widget/helpers";
 
 const ORG_RE = /^[A-Za-z0-9-]{1,64}$/;
@@ -29,6 +29,35 @@ function readWindow(name: string, o: Record<string, unknown>): { name: string; r
   return { name: canonName(name).slice(0, 64), raw, ...(iso ? { resetsAt: iso } : {}) };
 }
 
+/**
+ * Newer shape: `limits: [{ kind, percent, resets_at, scope? }]`, where kind is "session", "weekly_all" or
+ * "weekly_scoped" (scope.model.display_name names the model). Read first so it wins over the older top-level
+ * five_hour / seven_day fields. Returns whether any entry had a `kind`.
+ */
+function collectKindLimits(list: unknown, out: { name: string; raw: number; resetsAt?: string }[]): boolean {
+  if (!Array.isArray(list)) return false;
+  let sawKind = false;
+  for (const it of list) {
+    if (!isObj(it) || typeof it.kind !== "string") continue;
+    sawKind = true;
+    let name: string;
+    if (it.kind === "weekly_all") name = "seven_day";
+    else if (it.kind === "weekly_scoped") {
+      const scope = isObj(it.scope) ? it.scope : null;
+      const model = scope && isObj(scope.model) ? scope.model.display_name : null;
+      const m = typeof model === "string" ? model.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 32) : "";
+      if (!m) {
+        console.warn("[claude-usage] weekly_scoped limit without a model name");
+        continue;
+      }
+      name = `seven_day_${m}`;
+    } else name = it.kind;
+    const w = readWindow(name, it);
+    if (w) out.push(w);
+  }
+  return sawKind;
+}
+
 function collect(container: unknown, out: { name: string; raw: number; resetsAt?: string }[]): void {
   if (Array.isArray(container)) {
     for (const it of container) {
@@ -48,13 +77,37 @@ function collect(container: unknown, out: { name: string; raw: number; resetsAt?
   }
 }
 
+/** Read `seven_day_breakdown` defensively; undefined when there are no valid rows. Never throws. */
+export function parseBreakdown(v: unknown): UsageBreakdown | undefined {
+  try {
+    if (!isObj(v) || !Array.isArray(v.rows)) return undefined;
+    const rows: UsageBreakdown["rows"] = [];
+    for (const r of v.rows) {
+      if (rows.length >= 12) break;
+      if (!isObj(r) || typeof r.key !== "string" || r.key.length === 0 || r.key.length > 40) continue;
+      const name = typeof r.display_name === "string" ? r.display_name.trim() : "";
+      if (!name || name.length > 40) continue;
+      if (typeof r.percent !== "number" || !Number.isFinite(r.percent) || r.percent < 0) continue;
+      rows.push({ key: r.key, name, percent: Math.min(100, r.percent) });
+    }
+    if (!rows.length) return undefined;
+    const str = (x: unknown): string | undefined => (typeof x === "string" && x.length <= 64 ? x : undefined);
+    const asOf = str(v.as_of);
+    const windowStartedAt = str(v.window_started_at);
+    return { ...(asOf ? { asOf } : {}), ...(windowStartedAt ? { windowStartedAt } : {}), rows };
+  } catch {
+    return undefined;
+  }
+}
+
 /** Never throws. Accepts utilization as 0–100 or 0–1 (all values <= 1 with a fractional one => fractions). */
 export function parseAccountUsage(json: unknown, now = Date.now()): AccountUsage | null {
   try {
     if (typeof json !== "object" || json === null) return null;
     const found: { name: string; raw: number; resetsAt?: string }[] = [];
+    const kindLimits = isObj(json) && collectKindLimits(json.limits, found);
     collect(json, found);
-    if (isObj(json)) for (const k of CONTAINER_KEYS) if (k in json) collect(json[k], found);
+    if (isObj(json)) for (const k of CONTAINER_KEYS) if (k in json && !(k === "limits" && kindLimits)) collect(json[k], found);
     if (!found.length) return null;
     const fractions = found.every((f) => f.raw <= 1) && found.some((f) => f.raw > 0 && f.raw < 1);
     const seen = new Set<string>();
@@ -66,7 +119,8 @@ export function parseAccountUsage(json: unknown, now = Date.now()): AccountUsage
       if (f.resetsAt) w.resetsAt = f.resetsAt;
       windows.push(w);
     }
-    return { fetchedAt: now, windows };
+    const breakdown = isObj(json) ? parseBreakdown(json.seven_day_breakdown) : undefined;
+    return { fetchedAt: now, windows, ...(breakdown ? { breakdown } : {}) };
   } catch {
     return null;
   }
@@ -83,7 +137,17 @@ export function describeShape(json: unknown): Record<string, string | Record<str
       const sub = Array.isArray(v) ? v[0] : v;
       if (typeof sub === "object" && sub !== null && !Array.isArray(sub)) {
         const m: Record<string, string> = {};
-        for (const [k2, v2] of Object.entries(sub).slice(0, 40)) m[k2.slice(0, 40)] = t(v2);
+        for (const [k2, v2] of Object.entries(sub).slice(0, 40)) {
+          const key2 = k2.slice(0, 40);
+          m[key2] = t(v2);
+          const first = Array.isArray(v2) ? v2[0] : undefined;
+          if (typeof first === "object" && first !== null && !Array.isArray(first)) {
+            for (const [k3, v3] of Object.entries(first)) {
+              if (Object.keys(m).length >= 40) break;
+              m[`${key2}[0].${k3.slice(0, 40)}`] = t(v3);
+            }
+          }
+        }
         out[k.slice(0, 40)] = Array.isArray(v) ? { "(array)": t(v), ...m } : m;
       } else out[k.slice(0, 40)] = t(v);
     }
